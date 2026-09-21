@@ -991,17 +991,23 @@ if (($package["requires"]["ext-redis"] ?? null) !== "*") {
 }
 '
 
-if predis_output=$(composer show predis/predis 2>&1); then
-  echo 'Unexpected dependency: predis/predis'
-  exit 1
-else
-  predis_status=$?
-fi
-printf '%s\n' "$predis_output"
-if [ "$predis_status" -ne 1 ] || ! printf '%s\n' "$predis_output" | grep -Fq 'Package "predis/predis" not found'; then
-  echo 'Unexpected composer show failure'
-  exit "$predis_status"
-fi
+installed_json=$(composer show --format=json) || exit $?
+printf '%s\n' "$installed_json" | php -r '
+$document = json_decode(stream_get_contents(STDIN), true, 512, JSON_THROW_ON_ERROR);
+$packages = $document["installed"] ?? null;
+if (!is_array($packages)) {
+    fwrite(STDERR, "Composer installed package list is missing\n");
+    exit(1);
+}
+$names = array_map(
+    static fn (array $package): ?string => $package["name"] ?? null,
+    $packages,
+);
+if (in_array("predis/predis", $names, true)) {
+    fwrite(STDERR, "Unexpected installed package: predis/predis\n");
+    exit(1);
+}
+'
 
 platform_json=$(composer check-platform-reqs --format=json)
 platform_status=$?
@@ -1022,7 +1028,7 @@ if (count($redis) !== 1 || ($redis[0]["status"] ?? null) !== "success") {
 '
 ```
 
-执行时先以 `composer check-platform-reqs --help` 验证 `--format=json`；当前 Composer 2.9.5 已验证支持。若目标 Composer 不支持该 flag，稳定替代方案是：普通 `composer check-platform-reqs` 必须以 0 退出，再对 `composer show ext-redis --format=json` 用 PHP/JSON 解析确认 name 为 `ext-redis` 且 versions 非空；包 metadata 的 `requires.ext-redis === '*'` 断言仍必须独立执行。记录安装包 metadata、`Package "predis/predis" not found` 或等价的未安装结果，以及 `ext-redis ... success`；Predis 查询的预期非零只用于缺席断言，其他 Composer 错误仍使 smoke 失败。
+执行时先以 `composer check-platform-reqs --help` 验证 `--format=json`；当前 Composer 2.9.5 已验证支持。若目标 Composer 不支持该 flag，稳定替代方案是：普通 `composer check-platform-reqs` 必须以 0 退出，再对 `composer show ext-redis --format=json` 用 PHP/JSON 解析确认 name 为 `ext-redis` 且 versions 非空；包 metadata 的 `requires.ext-redis === '*'` 断言仍必须独立执行。记录安装包 metadata、从 installed package names 得出的 Predis 缺席结果，以及 `ext-redis ... success`；任何 Composer 命令或 JSON schema 异常都使 smoke 失败。
 
 - [ ] **Step 4: 执行最终验收并记录证据。**
 
