@@ -145,8 +145,6 @@ final class SensitiveText
         try {
             if (null === $previous || $this->repository->version() !== $previous->version) {
                 $this->replaceDictionary();
-            } else {
-                $this->lastReloadError = null;
             }
         } catch (DictionaryException $exception) {
             $this->recordFailure($exception);

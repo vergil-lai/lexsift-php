@@ -38,6 +38,40 @@ it('reuses and replaces snapshots while retaining last known good on failure', f
         ->and($scanner->stats()->lastReloadError)
         ->toBe(RedisUnavailableException::class . ': dictionary refresh failed')
         ->and($scanner->stats()->lastReloadError)->not->toContain('Injected Redis failure');
+
+    $repo->fail = false;
+    $clock->advance(5);
+    expect($scanner->scan('微信')->matched())->toBeTrue()
+        ->and($scanner->stats()->lastReloadError)
+        ->toBe(RedisUnavailableException::class . ': dictionary refresh failed');
+
+    $scanner->reload();
+    expect($scanner->stats()->lastReloadError)->toBeNull();
+});
+
+it('keeps an automatic refresh error until a replacement succeeds', function () {
+    $repo = new FakeRepository(new SensitiveDictionary('1', [new SensitiveTerm('微信')]));
+    $clock = new FakeClock();
+    $scanner = new SensitiveText(new TextNormalizer(), $repo, [new AhoCorasickMatcher()], clock: $clock);
+    $scanner->scan('微信');
+
+    $repo->fail = true;
+    $clock->advance(5);
+    expect($scanner->scan('微信')->matched())->toBeTrue()
+        ->and($scanner->stats()->lastReloadError)
+        ->toBe(RedisUnavailableException::class . ': dictionary refresh failed');
+
+    $repo->fail = false;
+    $clock->advance(5);
+    expect($scanner->scan('微信')->matched())->toBeTrue()
+        ->and([$repo->versionCalls, $repo->loadCalls])->toBe([2, 1])
+        ->and($scanner->stats()->lastReloadError)
+        ->toBe(RedisUnavailableException::class . ': dictionary refresh failed');
+
+    $repo->snapshot = new SensitiveDictionary('2', [new SensitiveTerm('新词')]);
+    $clock->advance(5);
+    expect($scanner->scan('新词')->matched())->toBeTrue()
+        ->and($scanner->stats()->lastReloadError)->toBeNull();
 });
 
 it('loads lazily and exposes stats without causing repository IO', function () {
