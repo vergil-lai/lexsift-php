@@ -8,6 +8,7 @@ use VergilLai\SensitiveText\Dictionary\CompiledDictionary;
 use VergilLai\SensitiveText\Dictionary\DictionaryCompiler;
 use VergilLai\SensitiveText\Dictionary\SensitiveDictionary;
 use VergilLai\SensitiveText\Dictionary\SensitiveTerm;
+use VergilLai\SensitiveText\Exception\DictionaryCompileException;
 use VergilLai\SensitiveText\Normalizer\NormalizedText;
 use VergilLai\SensitiveText\Normalizer\TextNormalizer;
 use VergilLai\SensitiveText\Result\MatchResult;
@@ -42,7 +43,12 @@ final class WhitelistMatcher
                 continue;
             }
 
-            $exactTerms[$normalizer->normalize($rule->text)->normalized] = true;
+            $normalizedRule = $normalizer->normalize($rule->text)->normalized;
+            if ('' === $normalizedRule) {
+                throw new DictionaryCompileException('Enabled terms must not normalize to an empty string.');
+            }
+
+            $exactTerms[$normalizedRule] = true;
         }
 
         $this->exactTerms = $exactTerms;

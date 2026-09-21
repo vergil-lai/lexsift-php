@@ -5,6 +5,7 @@ declare(strict_types=1);
 use VergilLai\SensitiveText\Dictionary\DictionaryCompiler;
 use VergilLai\SensitiveText\Dictionary\SensitiveDictionary;
 use VergilLai\SensitiveText\Dictionary\SensitiveTerm;
+use VergilLai\SensitiveText\Exception\DictionaryCompileException;
 use VergilLai\SensitiveText\Matcher\AhoCorasickMatcher;
 use VergilLai\SensitiveText\Matcher\WhitelistMatcher;
 use VergilLai\SensitiveText\Normalizer\TextNormalizer;
@@ -94,3 +95,15 @@ it('uses the same normalization when matching whitelist phrases', function () {
     expect($kept)->toHaveCount(1)
         ->and([$kept[0]->start, $kept[0]->end])->toBe([8, 10]);
 });
+
+it('rejects exact whitelist rules that normalize to empty', function (string $rule) {
+    expect(fn() => new WhitelistMatcher(new TextNormalizer(), [
+        new WhitelistRule($rule, WhitelistMode::Exact),
+    ]))->toThrow(
+        DictionaryCompileException::class,
+        'Enabled terms must not normalize to an empty string.',
+    );
+})->with([
+    'literal empty' => '',
+    'normalized empty' => ' ❤️',
+]);
