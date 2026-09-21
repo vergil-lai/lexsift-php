@@ -48,7 +48,7 @@ final class FakeRedisClient implements RedisClientInterface
         $this->throwIfFailed();
 
         $current = $this->values[$versionKey] ?? null;
-        if ($current !== $expectedVersion) {
+        if (($current ?? '') !== ($expectedVersion ?? '')) {
             return null;
         }
 

@@ -17,7 +17,9 @@ sensitive_text:dictionary:version
 {"schema":1,"terms":[{"term":"赌博","category":"gambling","severity":3,"action":"block","enabled":true,"metadata":{"source":"manual"}}]}
 ```
 
-root 只允许 `schema` 和 `terms`。`schema` 必须是整数 `1`，`terms` 必须是 JSON array。每条记录只允许 `term`、`category`、`severity`、`action`、`enabled`、`metadata`；未知字段会被拒绝。`term` 和 `category` 是非空字符串，`severity` 是 `1..4`，`action` 是 `allow`、`flag`、`review` 或 `block`，`enabled` 是布尔值。`metadata` 的顶层 key 是字符串，值可以是 JSON scalar、null，或再嵌套一层仅含 scalar/null 的数组或对象。
+root 只允许 `schema` 和 `terms`。`schema` 必须是整数 `1`，`terms` 必须是 JSON array，每条 term 必须是 JSON object。每条记录只允许 `term`、`category`、`severity`、`action`、`enabled`、`metadata`；未知字段会被拒绝。`term` 和 `category` 是非空字符串，`severity` 是 `1..4`，`action` 是 `allow`、`flag`、`review` 或 `block`，`enabled` 是布尔值。
+
+`metadata` 必须是 JSON object，包括空 metadata 的固定表示 `{}`。顶层 key 是字符串，值可以是 JSON scalar、null，或再嵌套一层仅含 scalar/null 的 JSON array/object。嵌套空集合固定表示为 JSON array `[]`；嵌套空 object `{}` 会被拒绝，因为 `SensitiveTerm` 的 PHP array 类型无法保留两者的容器差异。非空 nested object 和 list 都保持各自 shape 往返，不做强制 cast。
 
 合法空词库是 `{"schema":1,"terms":[]}`。缺少词库 key 或版本 key 表示快照不完整，不等同于空词库。payload 不保存 `normalizedTerm`；加载后必须按当前 normalizer 配置重新编译。
 

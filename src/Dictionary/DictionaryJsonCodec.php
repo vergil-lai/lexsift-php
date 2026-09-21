@@ -26,7 +26,7 @@ final class DictionaryJsonCodec
                 'severity' => $term->severity->value,
                 'action' => $term->action->value,
                 'enabled' => $term->enabled,
-                'metadata' => $this->decodeMetadata($term->metadata),
+                'metadata' => $this->encodeMetadata($term->metadata),
             ];
         }
 
@@ -61,8 +61,12 @@ final class DictionaryJsonCodec
         }
 
         $terms = [];
-        foreach ($decoded['terms'] as $record) {
-            if (!is_array($record)
+        foreach ($decoded['terms'] as $index => $record) {
+            $recordShape = $shape->terms[$index] ?? null;
+            if (!$recordShape instanceof \stdClass
+                || !property_exists($recordShape, 'metadata')
+                || !$recordShape->metadata instanceof \stdClass
+                || !is_array($record)
                 || 6 !== count($record)
                 || !array_key_exists('term', $record)
                 || !array_key_exists('category', $record)
@@ -101,7 +105,7 @@ final class DictionaryJsonCodec
                 $severity,
                 $action,
                 $enabled,
-                $this->decodeMetadata($metadata),
+                $this->decodeMetadata($metadata, $recordShape->metadata),
             );
         }
 
@@ -113,7 +117,7 @@ final class DictionaryJsonCodec
      *
      * @return array<string, bool|float|int|string|null|array<array-key, bool|float|int|string|null>>
      */
-    private function decodeMetadata(array $metadata): array
+    private function normalizeMetadata(array $metadata): array
     {
         $decoded = [];
         foreach ($metadata as $key => $value) {
@@ -140,6 +144,60 @@ final class DictionaryJsonCodec
                 $nested[$nestedKey] = $nestedValue;
             }
             $decoded[$key] = $nested;
+        }
+
+        return $decoded;
+    }
+
+    /**
+     * @param array<string, bool|float|int|string|null|array<array-key, bool|float|int|string|null>> $metadata
+     */
+    private function encodeMetadata(array $metadata): \stdClass
+    {
+        $encoded = new \stdClass();
+        foreach ($this->normalizeMetadata($metadata) as $key => $value) {
+            $encoded->{$key} = $value;
+        }
+
+        return $encoded;
+    }
+
+    /**
+     * @param array<array-key, mixed> $metadata
+     *
+     * @return array<string, bool|float|int|string|null|array<array-key, bool|float|int|string|null>>
+     */
+    private function decodeMetadata(array $metadata, \stdClass $shape): array
+    {
+        $decoded = $this->normalizeMetadata($metadata);
+        $shapeValues = get_object_vars($shape);
+        if (count($decoded) !== count($shapeValues)) {
+            throw new DictionaryException('Dictionary metadata keys must preserve their JSON object shape.');
+        }
+
+        foreach ($decoded as $key => $value) {
+            if (!array_key_exists($key, $shapeValues)) {
+                throw new DictionaryException('Dictionary metadata keys must preserve their JSON object shape.');
+            }
+
+            if (!is_array($value)) {
+                continue;
+            }
+
+            $valueShape = $shapeValues[$key];
+            if (is_array($valueShape)) {
+                if (!array_is_list($value)) {
+                    throw new DictionaryException('Dictionary metadata array shape is invalid.');
+                }
+
+                continue;
+            }
+
+            if (!$valueShape instanceof \stdClass
+                || [] === get_object_vars($valueShape)
+                || array_is_list($value)) {
+                throw new DictionaryException('Dictionary metadata object shape cannot be preserved.');
+            }
         }
 
         return $decoded;

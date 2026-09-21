@@ -60,6 +60,20 @@ it('round trips every term field without storing normalized text', function () {
         ->and($decodedTerms[0]->metadata)->toBe($term->metadata);
 });
 
+it('encodes metadata as an object and preserves nested empty lists', function () {
+    $codec = new DictionaryJsonCodec();
+
+    $emptyMapPayload = $codec->encode([new SensitiveTerm('empty')]);
+    $nestedListPayload = $codec->encode([new SensitiveTerm('nested', metadata: ['empty' => []])]);
+
+    expect($emptyMapPayload)
+        ->toBe('{"schema":1,"terms":[{"term":"empty","category":"default","severity":2,"action":"flag","enabled":true,"metadata":{}}]}')
+        ->and($codec->decode($emptyMapPayload)[0]->metadata)->toBe([])
+        ->and($nestedListPayload)
+        ->toBe('{"schema":1,"terms":[{"term":"nested","category":"default","severity":2,"action":"flag","enabled":true,"metadata":{"empty":[]}}]}')
+        ->and($codec->decode($nestedListPayload)[0]->metadata)->toBe(['empty' => []]);
+});
+
 it('rejects malformed dictionary payloads', function (string $payload) {
     expect(fn() => (new DictionaryJsonCodec())->decode($payload))
         ->toThrow(DictionaryException::class);
@@ -69,19 +83,20 @@ it('rejects malformed dictionary payloads', function (string $payload) {
     'wrong schema' => '{"schema":2,"terms":[]}',
     'unknown root field' => '{"schema":1,"terms":[],"typo":true}',
     'terms is an empty object' => '{"schema":1,"terms":{}}',
-    'terms is a sequential object' => '{"schema":1,"terms":{"0":{"term":"x","category":"default","severity":2,"action":"flag","enabled":true,"metadata":[]}}}',
-    'terms is not a list' => '{"schema":1,"terms":{"term":{"term":"x","category":"default","severity":2,"action":"flag","enabled":true,"metadata":[]}}}',
+    'terms is a sequential object' => '{"schema":1,"terms":{"0":{"term":"x","category":"default","severity":2,"action":"flag","enabled":true,"metadata":{}}}}',
+    'terms is not a list' => '{"schema":1,"terms":{"term":{"term":"x","category":"default","severity":2,"action":"flag","enabled":true,"metadata":{}}}}',
     'term is not an object' => '{"schema":1,"terms":["x"]}',
-    'unknown term field' => '{"schema":1,"terms":[{"term":"x","category":"default","severity":2,"action":"flag","enabled":true,"metadata":[],"normalizedTerm":"x"}]}',
-    'empty term' => '{"schema":1,"terms":[{"term":"","category":"default","severity":2,"action":"flag","enabled":true,"metadata":[]}]}',
-    'empty category' => '{"schema":1,"terms":[{"term":"x","category":"","severity":2,"action":"flag","enabled":true,"metadata":[]}]}',
-    'term has wrong type' => '{"schema":1,"terms":[{"term":1,"category":"default","severity":2,"action":"flag","enabled":true,"metadata":[]}]}',
-    'severity has wrong type' => '{"schema":1,"terms":[{"term":"x","category":"default","severity":"2","action":"flag","enabled":true,"metadata":[]}]}',
-    'severity is outside enum' => '{"schema":1,"terms":[{"term":"x","category":"default","severity":5,"action":"flag","enabled":true,"metadata":[]}]}',
-    'action is outside enum' => '{"schema":1,"terms":[{"term":"x","category":"default","severity":2,"action":"warn","enabled":true,"metadata":[]}]}',
-    'enabled has wrong type' => '{"schema":1,"terms":[{"term":"x","category":"default","severity":2,"action":"flag","enabled":1,"metadata":[]}]}',
-    'metadata is not an array' => '{"schema":1,"terms":[{"term":"x","category":"default","severity":2,"action":"flag","enabled":true,"metadata":null}]}',
-    'metadata has numeric outer key' => '{"schema":1,"terms":[{"term":"x","category":"default","severity":2,"action":"flag","enabled":true,"metadata":["manual"]}]}',
+    'unknown term field' => '{"schema":1,"terms":[{"term":"x","category":"default","severity":2,"action":"flag","enabled":true,"metadata":{},"normalizedTerm":"x"}]}',
+    'empty term' => '{"schema":1,"terms":[{"term":"","category":"default","severity":2,"action":"flag","enabled":true,"metadata":{}}]}',
+    'empty category' => '{"schema":1,"terms":[{"term":"x","category":"","severity":2,"action":"flag","enabled":true,"metadata":{}}]}',
+    'term has wrong type' => '{"schema":1,"terms":[{"term":1,"category":"default","severity":2,"action":"flag","enabled":true,"metadata":{}}]}',
+    'severity has wrong type' => '{"schema":1,"terms":[{"term":"x","category":"default","severity":"2","action":"flag","enabled":true,"metadata":{}}]}',
+    'severity is outside enum' => '{"schema":1,"terms":[{"term":"x","category":"default","severity":5,"action":"flag","enabled":true,"metadata":{}}]}',
+    'action is outside enum' => '{"schema":1,"terms":[{"term":"x","category":"default","severity":2,"action":"warn","enabled":true,"metadata":{}}]}',
+    'enabled has wrong type' => '{"schema":1,"terms":[{"term":"x","category":"default","severity":2,"action":"flag","enabled":1,"metadata":{}}]}',
+    'metadata is null' => '{"schema":1,"terms":[{"term":"x","category":"default","severity":2,"action":"flag","enabled":true,"metadata":null}]}',
+    'metadata is a list' => '{"schema":1,"terms":[{"term":"x","category":"default","severity":2,"action":"flag","enabled":true,"metadata":[]}]}',
+    'nested metadata is an empty object' => '{"schema":1,"terms":[{"term":"x","category":"default","severity":2,"action":"flag","enabled":true,"metadata":{"options":{}}}]}',
     'metadata is nested too deeply' => '{"schema":1,"terms":[{"term":"x","category":"default","severity":2,"action":"flag","enabled":true,"metadata":{"options":{"nested":{"again":true}}}}]}',
 ]);
 
@@ -183,6 +198,25 @@ it('does not alter either key when the maximum version overflows', function () {
         ->and($redis->readSnapshot('sensitive_text:dictionary:version', 'sensitive_text:dictionary'))
         ->toBe(['9223372036854775807', $originalPayload]);
 });
+
+it('validates an existing empty version after Lua-equivalent CAS comparison', function (?string $expectedVersion) {
+    $codec = new DictionaryJsonCodec();
+    $redis = new FakeRedisClient();
+    $originalPayload = $codec->encode([new SensitiveTerm('保留词')]);
+    $redis->seed('', $originalPayload);
+
+    expect(fn() => $redis->compareAndSwap(
+        'sensitive_text:dictionary:version',
+        'sensitive_text:dictionary',
+        $expectedVersion,
+        $codec->encode([new SensitiveTerm('新词')]),
+    ))->toThrow(DictionaryException::class)
+        ->and($redis->readSnapshot('sensitive_text:dictionary:version', 'sensitive_text:dictionary'))
+        ->toBe(['', $originalPayload]);
+})->with([
+    'null expected version' => null,
+    'empty expected version' => '',
+]);
 
 it('propagates injected redis failures', function () {
     $redis = new FakeRedisClient();
