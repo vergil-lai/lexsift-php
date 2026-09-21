@@ -1,0 +1,45 @@
+{
+    "name": "vergil-lai/sensitive-text",
+    "description": "A Unicode-aware sensitive text detection package for PHP",
+    "type": "library",
+    "license": "MIT",
+    "require": {
+        "php": ">=8.2",
+        "ext-intl": "*",
+        "ext-mbstring": "*",
+        "predis/predis": "^3.0"
+    },
+    "require-dev": {
+        "friendsofphp/php-cs-fixer": "^3.0",
+        "orchestra/testbench": "^10.0 || ^11.0",
+        "pestphp/pest": "^3.0 || ^4.0",
+        "phpstan/phpstan": "^2.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "VergilLai\\SensitiveText\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "VergilLai\\SensitiveText\\Tests\\": "tests/"
+        }
+    },
+    "config": {
+        "allow-plugins": {
+            "pestphp/pest-plugin": true
+        }
+    },
+    "scripts": {
+        "test": "pest",
+        "test:coverage": "pest --coverage --min=85",
+        "stan": "phpstan analyse --memory-limit=1G",
+        "cs": "php-cs-fixer fix --dry-run --diff",
+        "cs:fix": "php-cs-fixer fix",
+        "check": [
+            "@cs",
+            "@stan",
+            "@test"
+        ]
+    }
+}
