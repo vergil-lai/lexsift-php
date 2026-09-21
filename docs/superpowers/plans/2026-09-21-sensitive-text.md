@@ -979,9 +979,18 @@ steps:
 
 以上 steps 放入 matrix job 并补 `services.redis.image: redis:7`、端口 6379、redis-cli ping health check；coverage 独立 job 覆盖设置为 pcov 并运行 composer test:coverage；执行时按官方 action 元数据核对版本/固定 SHA，不为此升级业务依赖。PHPStan max 不允许测试目录被偷偷排除。
 
-- [ ] **Step 3: 发布前外部消费 smoke。** `composer archive --format=zip --dir=/tmp/sensitive-text-release`；解包到临时目录，独立 Composer consumer 以 path repository 安装该包 `--no-dev`，运行真实 Redis 示例并确认安装集合没有 Illuminate/Pest/PHPStan。consumer 内必须执行下面的安装集合断言与平台检查：Predis 一旦存在就令 smoke 失败，`composer check-platform-reqs` 必须明确显示 ext-redis 通过；不能只检查源包的 composer.json。对另一临时 Laravel consumer 验证 discovery 和 Facade。`.gitattributes` export-ignore `/tests`、`/benchmarks`、`/.github`、`/docs/superpowers`、开发工具配置；保留 README、LICENSE、config 和生产 src。archive 与可实际在 Packagist 下载安装不同，不能把本地 smoke 当作已经发布。
+- [ ] **Step 3: 发布前外部消费 smoke。** `composer archive --format=zip --dir=/tmp/sensitive-text-release`；解包到临时目录，独立 Composer consumer 以 path repository 安装该包 `--no-dev`，运行真实 Redis 示例并确认安装集合没有 Illuminate/Pest/PHPStan。consumer 内必须执行下面的安装集合断言与平台检查：已安装包 metadata 的 `requires.ext-redis` 必须精确为 `*`，Predis 一旦存在就令 smoke 失败，`composer check-platform-reqs` 必须以 0 退出且机器可解析结果中 ext-redis status 为 success；不能只检查源包的 composer.json。对另一临时 Laravel consumer 验证 discovery 和 Facade。`.gitattributes` export-ignore `/tests`、`/benchmarks`、`/.github`、`/docs/superpowers`、开发工具配置；保留 README、LICENSE、config 和生产 src。archive 与可实际在 Packagist 下载安装不同，不能把本地 smoke 当作已经发布。
 
 ```bash
+package_json=$(composer show vergil-lai/sensitive-text --format=json) || exit $?
+printf '%s\n' "$package_json" | php -r '
+$package = json_decode(stream_get_contents(STDIN), true, 512, JSON_THROW_ON_ERROR);
+if (($package["requires"]["ext-redis"] ?? null) !== "*") {
+    fwrite(STDERR, "Installed package must require ext-redis: *\n");
+    exit(1);
+}
+'
+
 if predis_output=$(composer show predis/predis 2>&1); then
   echo 'Unexpected dependency: predis/predis'
   exit 1
@@ -993,10 +1002,27 @@ if [ "$predis_status" -ne 1 ] || ! printf '%s\n' "$predis_output" | grep -Fq 'Pa
   echo 'Unexpected composer show failure'
   exit "$predis_status"
 fi
-composer check-platform-reqs
+
+platform_json=$(composer check-platform-reqs --format=json)
+platform_status=$?
+printf '%s\n' "$platform_json"
+if [ "$platform_status" -ne 0 ]; then
+  exit "$platform_status"
+fi
+printf '%s\n' "$platform_json" | php -r '
+$requirements = json_decode(stream_get_contents(STDIN), true, 512, JSON_THROW_ON_ERROR);
+$redis = array_values(array_filter(
+    $requirements,
+    static fn (array $requirement): bool => ($requirement["name"] ?? null) === "ext-redis",
+));
+if (count($redis) !== 1 || ($redis[0]["status"] ?? null) !== "success") {
+    fwrite(STDERR, "ext-redis platform requirement did not succeed\n");
+    exit(1);
+}
+'
 ```
 
-记录 `Package "predis/predis" not found` 或等价的未安装结果，以及 `ext-redis ... success`；前者的预期非零只用于该缺席断言，其他 Composer 错误仍使 smoke 失败。
+执行时先以 `composer check-platform-reqs --help` 验证 `--format=json`；当前 Composer 2.9.5 已验证支持。若目标 Composer 不支持该 flag，稳定替代方案是：普通 `composer check-platform-reqs` 必须以 0 退出，再对 `composer show ext-redis --format=json` 用 PHP/JSON 解析确认 name 为 `ext-redis` 且 versions 非空；包 metadata 的 `requires.ext-redis === '*'` 断言仍必须独立执行。记录安装包 metadata、`Package "predis/predis" not found` 或等价的未安装结果，以及 `ext-redis ... success`；Predis 查询的预期非零只用于缺席断言，其他 Composer 错误仍使 smoke 失败。
 
 - [ ] **Step 4: 执行最终验收并记录证据。**
 
