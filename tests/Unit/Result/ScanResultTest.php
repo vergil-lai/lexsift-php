@@ -98,6 +98,15 @@ it('merges overlapping nested and adjacent ranges before masking', function () {
         ->and($result->mask('😀'))->toBe('a😀😀😀😀😀g😀😀');
 });
 
+it('uses the configured default mask unless a call overrides it', function () {
+    $result = new ScanResult('敏感词', [
+        new MatchResult('敏感', '敏感', '敏感', 'test', Severity::Low, Action::Flag, 0, 2, 'aho_corasick'),
+    ], '#');
+
+    expect($result->mask())->toBe('##词')
+        ->and($result->mask('!'))->toBe('!!词');
+});
+
 it('rejects invalid or multi-codepoint masks', function (string $mask) {
     $result = new ScanResult('a', [
         new MatchResult('a', 'a', 'a', 'test', Severity::Low, Action::Flag, 0, 1, 'aho_corasick'),

@@ -53,12 +53,16 @@ final class SensitiveText
         ?WhitelistMatcher $whitelist = null,
         ?ClockInterface $clock = null,
         private readonly float $versionCheckInterval = 5.0,
+        private readonly string $maskCharacter = '*',
     ) {
         if ([] === $matchers) {
             throw new InvalidConfigurationException('At least one matcher is required.');
         }
         if ($versionCheckInterval < 0) {
             throw new InvalidConfigurationException('Version check interval must not be negative.');
+        }
+        if (!mb_check_encoding($maskCharacter, 'UTF-8') || mb_strlen($maskCharacter, 'UTF-8') > 1) {
+            throw new InvalidConfigurationException('Mask must be empty or a single valid UTF-8 codepoint.');
         }
 
         $this->compiler = $compiler ?? new DictionaryCompiler($normalizer);
@@ -86,6 +90,7 @@ final class SensitiveText
             [new AhoCorasickMatcher(), new RegexMatcher($config->regexRules)],
             whitelist: new WhitelistMatcher($normalizer, $config->whitelistRules),
             versionCheckInterval: $config->versionCheckInterval,
+            maskCharacter: $config->maskCharacter,
         );
     }
 
@@ -98,7 +103,7 @@ final class SensitiveText
             array_push($matches, ...$matcher->match($normalized, $dictionary));
         }
 
-        return new ScanResult($text, $this->whitelist->filter($normalized, $matches));
+        return new ScanResult($text, $this->whitelist->filter($normalized, $matches), $this->maskCharacter);
     }
 
     public function reload(): void

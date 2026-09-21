@@ -17,7 +17,9 @@ final readonly class ScanResult
     public function __construct(
         public string $original,
         array $matches,
+        private string $defaultMask = '*',
     ) {
+        $this->validateMask($defaultMask);
         $originalLength = mb_strlen($original, 'UTF-8');
         foreach ($matches as $match) {
             if ($match->start < 0 || $match->end <= $match->start || $match->end > $originalLength) {
@@ -110,11 +112,10 @@ final readonly class ScanResult
         return Action::Review === $this->recommendedAction();
     }
 
-    public function mask(string $mask = '*'): string
+    public function mask(?string $mask = null): string
     {
-        if (!mb_check_encoding($mask, 'UTF-8') || mb_strlen($mask, 'UTF-8') > 1) {
-            throw new InvalidArgumentException('Mask must be empty or a single valid UTF-8 codepoint.');
-        }
+        $mask ??= $this->defaultMask;
+        $this->validateMask($mask);
 
         $ranges = [];
         foreach ($this->matches as $match) {
@@ -135,6 +136,13 @@ final readonly class ScanResult
         }
 
         return $result . mb_substr($this->original, $cursor, null, 'UTF-8');
+    }
+
+    private function validateMask(string $mask): void
+    {
+        if (!mb_check_encoding($mask, 'UTF-8') || mb_strlen($mask, 'UTF-8') > 1) {
+            throw new InvalidArgumentException('Mask must be empty or a single valid UTF-8 codepoint.');
+        }
     }
 
     private function identity(MatchResult $match): string

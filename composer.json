@@ -15,6 +15,10 @@
         "pestphp/pest": "^3.0 || ^4.0",
         "phpstan/phpstan": "^2.0"
     },
+    "suggest": {
+        "illuminate/redis": "Required for Laravel Redis integration (^12.0 || ^13.0).",
+        "illuminate/support": "Required for Laravel service provider and facade integration (^12.0 || ^13.0)."
+    },
     "autoload": {
         "psr-4": {
             "VergilLai\\SensitiveText\\": "src/"
@@ -28,6 +32,13 @@
     "config": {
         "allow-plugins": {
             "pestphp/pest-plugin": true
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "VergilLai\\SensitiveText\\Laravel\\SensitiveTextServiceProvider"
+            ]
         }
     },
     "scripts": {
