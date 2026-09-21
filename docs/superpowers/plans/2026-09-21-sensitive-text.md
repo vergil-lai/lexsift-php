@@ -6,7 +6,7 @@
 
 **Architecture:** 核心是同步、无请求状态的匹配流水线；归一化与编译在独立对象中完成，已编译词库通过不可变快照复用。Redis repository 提供一致的版本化词库，主服务只负责惰性初始化、限频检查和成功后替换快照。Laravel 只做配置、连接和容器适配，不进入核心依赖链。
 
-**Tech Stack:** PHP >=8.2、ext-intl、ext-mbstring、Composer/PSR-4、Predis 3、可选 ext-redis、Pest、PHPStan max、PHP-CS-Fixer、Testbench。
+**Tech Stack:** PHP >=8.2、ext-intl、ext-mbstring、ext-redis（phpredis）、Composer/PSR-4、Pest、PHPStan max、PHP-CS-Fixer、Testbench。
 
 **Spec:** `docs/superpowers/specs/2026-09-21-sensitive-text-original.md`（用户附件原文；第八十九节末尾原本截断在“52. 编写 B”）。本计划以下“设计约定”补齐可执行语义，供用户审阅。
 
@@ -16,7 +16,7 @@
 - 包名：`vergil-lai/sensitive-text`；Namespace：`VergilLai\SensitiveText`；PSR-4。
 - 所有 PHP 文件使用：`declare(strict_types=1);`。
 - 核心代码不依赖 Laravel；Laravel 仅作为 optional integration。
-- Redis 是必要运行组件；Composer 要求 `ext-intl`、`ext-mbstring`，不要 silently fallback。
+- Redis 是必要运行组件；Composer 要求 `ext-intl`、`ext-mbstring`、`ext-redis`，缺少任一扩展时阻止安装，不提供 Redis 客户端 fallback。
 - 测试使用 Pest；静态分析使用 PHPStan，默认目标：`PHPStan max`；最终 `0 PHPStan errors`。
 - 代码风格使用 PHP-CS-Fixer；公共 API 和复杂逻辑必须提供清晰 PHPDoc。
 - `Detection != Business Decision`；`Normalizer != Matcher`；`Dictionary != Automaton`；`Matcher != Redis`；`Core != Laravel`；`Concurrency != Performance`。
@@ -74,13 +74,12 @@
 
 ### 依赖与证据
 
-候选约束：生产 `php:>=8.2`、`ext-intl:*`、`ext-mbstring:*`、`predis/predis:^3.0`。保留需求指定的 PHP 下限；文档只声称真实矩阵验证过的版本，不把开放的 Composer 约束视为未来 PHP 兼容性证明。可选 `ext-redis`；Illuminate 与 Testbench 仅 dev/suggest。
+候选约束：生产 `php:>=8.2`、`ext-intl:*`、`ext-mbstring:*`、`ext-redis:*`。保留需求指定的 PHP 下限；文档只声称真实矩阵验证过的版本，不把开放的 Composer 约束视为未来 PHP 兼容性证明。Redis 客户端仅支持 phpredis，缺少扩展时 Composer 阻止安装，不提供用户态客户端 fallback；Illuminate 与 Testbench 仅 dev/suggest。
 
 开发：`pestphp/pest:^3.0 || ^4.0`、`phpstan/phpstan:^2.0`、`friendsofphp/php-cs-fixer:^3.0`、`orchestra/testbench:^10.0 || ^11.0`。执行时 Composer solver 和真实 PHP 矩阵为最终证据；不得使用 `--ignore-platform-reqs`、禁用安全阻断来求解。Laravel 12 + Testbench 10 是 PHP 8.2 基线，Laravel 13 + Testbench 11 是较新 PHP 集成目标；后者须在 Task 11 用实际 package metadata/solver 确認再宣称支持。
 
 - [Composer schema](https://getcomposer.org/doc/04-schema.md)：生产、开发和建议依赖独立；已通过 Context7 `/composer/composer` 核对 PSR-4 与 platform requirements。
 - [Pest 支持策略](https://pestphp.com/docs/support-policy) 与 [Pest 3 升级指南](https://pestphp.com/docs/upgrade-guide)：Pest 3 支持 PHP 8.2；PHP 8.2 作兼容验证通道，较新 PHP 用受支持的新主版本，不将旧工具版本锁给全部环境。
-- [Predis package metadata](https://packagist.org/packages/predis/predis)：查询时 3.6.1 声明支持 PHP 7.2/8.x，故选择 3.x；不在计划阶段声称已安装或通过测试。
 - [Testbench 版本映射](https://packages.tools/testbench)：官方表明确 Laravel 12 对应 Testbench 10；新 Laravel 通道需追加实际验证。
 - [PHP Normalizer](https://www.php.net/manual/en/normalizer.normalize.php)：归一化返回 `string|false`，错误需显式处理，不能以空串替代。
 - [spatie/fork 官方仓库](https://github.com/spatie/fork)：作为 CLI 离线并行候选；V1 没有实测收益，故不实现、不推荐 HTTP 内使用。
@@ -107,7 +106,7 @@ src/
   Result/{MatchResult,ScanResult,ScannerStats}.php
   Contracts/{MatcherInterface,DictionaryRepositoryInterface,RedisClientInterface,
              ClockInterface,BatchExecutorInterface}.php
-  Redis/{PredisClientAdapter,PhpRedisClientAdapter}.php
+  Redis/PhpRedisClientAdapter.php
   Runtime/{RuntimeEnvironment,SyncBatchExecutor}.php
   Support/{SystemClock,DefaultScanner}.php
   SensitiveTextConfig.php / SensitiveText.php
@@ -135,7 +134,7 @@ docs/{dictionary-protocol,performance,release-checklist}.md
 
 **Interfaces:** Produces `Severity:int` Low=1/Medium=2/High=3/Critical=4；`Action:string` Allow/Flag/Review/Block；`Action::rank():int`。`SensitiveTerm::__construct(string $term,string $category='default',Severity $severity=Severity::Medium,Action $action=Action::Flag,bool $enabled=true,array $metadata=[])`。metadata 采用 PHPStan 递归 JSON 值别名或嵌套明确的 `array<string, scalar|null|array<array-key,scalar|null>>`，V1 最多两层；拒绝对象与资源，不使用任意 mixed 传播。
 
-- [ ] **Step 1: 写 Composer 和质量工具配置，安装依赖。** `require` 按上节；`autoload` 为 `VergilLai\\SensitiveText\\ => src/`，dev 为 `VergilLai\\SensitiveText\\Tests\\ => tests/`，`config.allow-plugins.pestphp/pest-plugin=true`，不设置全局 platform 假版本。`scripts` 使用：
+- [ ] **Step 1: 写 Composer 和质量工具配置，安装依赖。** `require` 按上节，必须直接要求 `ext-redis:*`，不加入用户态 Redis 客户端或缺扩展 fallback；`autoload` 为 `VergilLai\\SensitiveText\\ => src/`，dev 为 `VergilLai\\SensitiveText\\Tests\\ => tests/`，`config.allow-plugins.pestphp/pest-plugin=true`，不设置全局 platform 假版本。`scripts` 使用：
 
 ```json
 {
@@ -651,13 +650,13 @@ return nextVersion
 - [ ] **Step 4: 增加读取途中竞争、缺 key、坏 schema、非枚举值、disabled 和自定义 prefix 的测试。** Fake 的 readSnapshot 返回固定 pair 后模拟下一发布；load 的 version 与 payload 始终来自 pair，不调用独立 GET 拼接。version 检查与下一 load 的版本可以不同，以 load 快照为准。`composer check` Expected: 全通过。
 - [ ] **Step 5: 精确暂存并提交。** `git commit -m "feat: 定义 Redis 词库快照和原子发布协议"`。
 
-## Task 8: Predis / PhpRedis 适配与真实 Redis 测试
+## Task 8: PhpRedis 适配与真实 Redis 测试
 
-**Files:** Create `src/Redis/PredisClientAdapter.php`, `PhpRedisClientAdapter.php`; Test `tests/Unit/Redis/ClientAdapterTest.php`, `tests/Integration/Redis/RedisDictionaryRepositoryTest.php`。
+**Files:** Create `src/Redis/PhpRedisClientAdapter.php`; Test `tests/Unit/Redis/ClientAdapterTest.php`, `tests/Integration/Redis/RedisDictionaryRepositoryTest.php`。
 
-**Interfaces:** `PredisClientAdapter(\Predis\ClientInterface $client)`、`PhpRedisClientAdapter(\Redis $client)` 实现 Task 7 interface。第三方返回类型只在这里收窄：GET false/null→null，字符串保留，其余抛 RedisUnavailableException；snapshot 必须两个元素；CAS false/null→冲突 null，成功为数字字符串。任何连接/命令失败包装 RedisUnavailableException 并保留 previous。
+**Interfaces:** `PhpRedisClientAdapter(\Redis $client)` 实现 Task 7 interface。扩展返回类型只在这里收窄：GET false/null→null，字符串保留，其余抛 RedisUnavailableException；snapshot 必须两个元素；CAS false/null→冲突 null，成功为数字字符串。任何连接/命令失败包装 RedisUnavailableException 并保留 previous。`ext-redis` 是 Composer 强制依赖，缺扩展时安装即失败；不实现替代客户端或运行时降级。Redis Cluster 仍不支持。
 
-- [ ] **Step 1: 写 driver 单测与真实集成测试。** Unit 使用 PHPUnit/Pest 内置 mock 或可控 adapter stub，不实例化网络连接。真实测试按环境跳过，启用后连接失败必须失败，不能再 skip。
+- [ ] **Step 1: 写 adapter 单测与真实集成测试。** Unit 使用 PHPUnit/Pest 内置 mock 或可控 adapter stub，不实例化网络连接。真实测试只按环境开关跳过，启用后连接失败必须失败，不能再 skip。
 
 ```php
 beforeEach(function () {
@@ -666,42 +665,45 @@ beforeEach(function () {
     }
 });
 it('round trips on real redis', function () {
-    $client = new \Predis\Client(getenv('SENSITIVE_TEXT_REDIS_URL') ?: 'tcp://127.0.0.1:6379');
+    $client = new \Redis();
+    $client->connect(
+        getenv('SENSITIVE_TEXT_REDIS_HOST') ?: '127.0.0.1',
+        (int) (getenv('SENSITIVE_TEXT_REDIS_PORT') ?: 6379),
+        1.0,
+    );
     $prefix = 'sensitive_text:test:'.bin2hex(random_bytes(8)).':';
     try {
-        $repo = new RedisDictionaryRepository(new PredisClientAdapter($client), $prefix);
+        $repo = new RedisDictionaryRepository(new PhpRedisClientAdapter($client), $prefix);
         $v = $repo->publish([new SensitiveTerm('微信')], null);
         expect($repo->load()->version)->toBe($v)->and($repo->load()->terms[0]->term)->toBe('微信');
         expect(fn () => $repo->publish([], '0'))->toThrow(DictionaryException::class);
     } finally {
         $client->del([$prefix.'dictionary', $prefix.'dictionary:version']);
-        $client->disconnect();
+        $client->close();
     }
 });
 ```
 
 Run: `vendor/bin/pest tests/Unit/Redis/ClientAdapterTest.php`；Expected: 缺 adapter 失败；普通 composer test 的真实 Redis suite 可 skip。
 
-- [ ] **Step 2: 实现两驱动相同语义。** 使用上一任务的两个 Lua 脚本，保持 string 常量各 adapter 可引用 repo 无关的私有常量（两个 adapter 共用脚本时添加 `src/Redis/DictionaryScripts.php` 只负责脚本字符串）。
+- [ ] **Step 2: 实现 PhpRedis adapter。** 使用上一任务的两个 Lua 脚本；如 repository 与 adapter 需要共用脚本，添加 `src/Redis/DictionaryScripts.php`，只负责脚本字符串。
 
 ```php
-// Predis: command arguments are Redis wire order.
-$raw = $this->client->eval($script, 2, $versionKey, $dictionaryKey, $expectedVersion ?? '', $payload);
 // PhpRedis: keys precede arguments in its packed argument array.
 $raw = $this->client->eval($script, [$versionKey, $dictionaryKey, $expectedVersion ?? '', $payload], 2);
 ```
 
-PHPStan 对 ext-redis 类型依赖其内建 stub；缺扩展时仅显式选择 phpredis 构造路径抛 InvalidConfigurationException，默认 Predis 不受影响。不得通过安装 ext-redis 才能运行 Core Unit Tests。
+PHPStan 使用 ext-redis 类型信息分析 adapter。Composer 在安装阶段验证扩展；代码不做 `extension_loaded()` 分支，不提供 fallback，也不把缺扩展转换成运行时配置错误。
 
-- [ ] **Step 3: 启动/使用本地专用 Redis，实跑两个 driver。**
+- [ ] **Step 3: 启动/使用本地专用 Redis，实跑 phpredis 集成测试。**
 
 ```bash
 SENSITIVE_TEXT_REDIS_TESTS=1 vendor/bin/pest tests/Integration/Redis
 ```
 
-为 ext-redis case 创建同等测试，未装扩展时单独 skip 并在报告标明；CI 装扩展后两个 driver 均不得 skip。集成测试必须覆盖二客户端 CAS 冲突、缺失 key、合法空库、自定义 prefix、socket 断开错误包装、Lua 被禁止的错误包装；禁止 FLUSHDB/FLUSHALL，只删除随机前缀的两个 key。
+CI 必须安装 ext-redis；缺扩展时 Composer 安装失败，集成测试不得以缺扩展为由 skip。集成测试使用两个独立 phpredis 连接覆盖 CAS 冲突，并覆盖缺失 key、合法空库、自定义 prefix、socket 断开错误包装、Lua 被禁止的错误包装；禁止 FLUSHDB/FLUSHALL，只删除随机前缀的两个 key。
 
-- [ ] **Step 4: `composer check` 全通过，精确暂存并提交。** `git commit -m "feat: 接入 Redis 双驱动并验证快照协议"`。
+- [ ] **Step 4: `composer check` 全通过，精确暂存并提交。** `git commit -m "feat: 接入 phpredis 并验证快照协议"`。
 
 ## Task 9: 主服务、快照热替换和 Worker 安全
 
@@ -709,11 +711,11 @@ SENSITIVE_TEXT_REDIS_TESTS=1 vendor/bin/pest tests/Integration/Redis
 
 **Interfaces:** ClockInterface `monotonic():float` 秒，`wallTime():DateTimeImmutable`；SystemClock 基于 hrtime(true)/1e9 和 UTC now。FakeClock `advance(float):void`。FakeRepository 有 `public SensitiveDictionary $snapshot`、`public bool $fail=false`、versionCalls/loadCalls 计数，构造接受 snapshot，接口返回对应字段；失败抛 RedisUnavailableException。
 
-`SensitiveTextConfig` readonly 字段：`NormalizerConfig $normalizer=new NormalizerConfig()`、`string $redisDriver='predis'`、`string $redisUrl='tcp://127.0.0.1:6379'`、`string $redisPrefix='sensitive_text:'`、dictionaryKey/versionKey、`float $versionCheckInterval=5.0`、`float $redisTimeout=1.0`、`string $maskCharacter='*'`、`array $regexRules=[]`、`array $whitelistRules=[]`。拒绝负 interval/非正 timeout/空 key/两个 key 相同/无效 mask。不添加无法配置行为的 reload enum，自动 fallback 与手动 throw 的固定策略即 reload policy。
+`SensitiveTextConfig` readonly 字段：`NormalizerConfig $normalizer=new NormalizerConfig()`、`string $redisUrl='tcp://127.0.0.1:6379'`、`string $redisPrefix='sensitive_text:'`、dictionaryKey/versionKey、`float $versionCheckInterval=5.0`、`float $redisTimeout=1.0`、`string $maskCharacter='*'`、`array $regexRules=[]`、`array $whitelistRules=[]`。不提供 Redis driver 选择；固定使用必需的 phpredis。拒绝负 interval/非正 timeout/空 key/两个 key 相同/无效 mask。不添加无法配置行为的 reload enum；自动刷新失败保留 last-known-good、手动刷新失败抛异常即固定 reload policy。
 
 `SensitiveText::__construct(TextNormalizer $normalizer,DictionaryRepositoryInterface $repository,array $matchers,?DictionaryCompiler $compiler=null,?WhitelistMatcher $whitelist=null,?ClockInterface $clock=null,float $versionCheckInterval=5.0)`；matchers 为 list<MatcherInterface>，至少一个。`scan(string):ScanResult`、`reload():void`、`invalidate():void`、`stats():ScannerStats`。缺省 compiler 必须使用同一 normalizer。`ScannerStats` readonly：dictionaryVersion:?string、termCount:int、automatonNodeCount:int、lastCompileDuration:float、lastReloadAt:?DateTimeImmutable、estimatedMemoryBytes:int、versionLastCheckedAt:?DateTimeImmutable、lastReloadError:?string。只记录异常类与受控消息，不包含 Redis 密码和原文。
 
-- [ ] **Step 1: 写 interval/reload/fallback 红灯测试。**
+- [ ] **Step 1: 写 interval/reload/last-known-good 红灯测试。**
 
 ```php
 it('reuses and replaces snapshots while retaining last known good on failure', function () {
@@ -805,7 +807,7 @@ it('preserves batch keys and laziness', function () {
 
 Run: `vendor/bin/pest tests/Feature/SingletonTest.php tests/Unit/Runtime`；Expected: 缺入口/批处理失败。
 
-- [ ] **Step 2: 实现工厂与入口。** DefaultScanner 内部 lazy `self::$scanner ??= SensitiveText::fromConfig(new SensitiveTextConfig())`；fromConfig 构建 normalizer、Redis adapter/repository、AC/Regex matchers、whitelist，再调用 public 构造。Predis client 构造参数映射 URL/timeout/read_write_timeout；选择 PhpRedis 时连接必须推迟到首次命令，可在 PhpRedisClientAdapter 增加 `fromUrl(string,float):self` 与内部 lazy connection 配置，不能在 singleton 获取时建立网络。URL 解析检查 host/port/user/password/db/TLS scheme；不把 URL 写入异常。
+- [ ] **Step 2: 实现工厂与入口。** DefaultScanner 内部 lazy `self::$scanner ??= SensitiveText::fromConfig(new SensitiveTextConfig())`；fromConfig 构建 normalizer、`PhpRedisClientAdapter`/repository、AC/Regex matchers、whitelist，再调用 public 构造。连接必须推迟到首次命令；在 `PhpRedisClientAdapter` 增加 `fromUrl(string,float):self` 与内部 lazy connection 配置，不能在 singleton 获取时建立网络。URL 解析检查 host/port/user/password/db/TLS scheme，并把 timeout 映射到 phpredis 的 connect/read timeout；不把 URL 写入异常。没有 Redis driver 选择或客户端 fallback。
 
 ```php
 public function scan(iterable $texts): iterable
@@ -824,13 +826,13 @@ expect(RuntimeEnvironment::detect('fpm-fcgi'))->toBe(RuntimeEnvironment::Fpm);
 expect(RuntimeEnvironment::detect('cli'))->toBe(RuntimeEnvironment::Cli);
 ```
 
-- [ ] **Step 4: `composer check`，补缺驱动/非法 URL/超时参数用例，提交。** `git commit -m "feat: 提供独立 PHP 入口和同步批处理"`。
+- [ ] **Step 4: `composer check`，补非法 URL、认证、database 和超时参数用例，提交。** `git commit -m "feat: 提供独立 PHP 入口和同步批处理"`。
 
 ## Task 11: Laravel 可选集成
 
 **Files:** Create `src/Laravel/SensitiveTextServiceProvider.php`, `LaravelRedisAdapter.php`, `Facades/SensitiveText.php`, `config/sensitive-text.php`, `tests/Integration/Laravel/TestCase.php`, `ProviderTest.php`; Modify `composer.json`, `tests/Pest.php`, `.php-cs-fixer.php`, `phpstan.neon.dist`。
 
-**Interfaces:** LaravelRedisAdapter 接受 `Illuminate\Redis\Connections\Connection`，按 Task 7 interface 映射 command/get/eval；不能使用 facade 作为全局连接。Provider singleton 使用 closure 解析 config 与指定 `redis connection`；核心 SensitiveText 类型不依赖 Laravel。Facade accessor 返回核心类名。
+**Interfaces:** LaravelRedisAdapter 接受 `Illuminate\Redis\Connections\PhpRedisConnection`，按 Task 7 interface 映射 command/get/eval；lazy resolver 取得连接后也必须验证该具体类型，不支持 Laravel 的其他 Redis client。不能使用 facade 作为全局连接。Provider singleton 使用 closure 解析 config 与指定 `redis connection`；核心 SensitiveText 类型不依赖 Laravel。Facade accessor 返回核心类名。
 
 - [ ] **Step 1: 核对真实 Laravel/Testbench 版本并配置测试。** Composer 在 PHP 8.2 求解 Laravel12/Testbench10/Pest3 通道；较新 PHP 求解 Laravel13/Testbench11/Pest4 通道。若不兼容，明确收窄 Laravel 声称支持的范围，不添加生产 Illuminate require。
 
@@ -847,7 +849,7 @@ abstract class TestCase extends \Orchestra\Testbench\TestCase
 uses(\VergilLai\SensitiveText\Tests\Integration\Laravel\TestCase::class)->in('Integration/Laravel');
 ```
 
-在 composer.extra.laravel.providers 添加 `VergilLai\\SensitiveText\\Laravel\\SensitiveTextServiceProvider`；suggest 写明支持 Laravel 集成的 Illuminate support/redis 版本范围及 ext-redis。
+在 composer.extra.laravel.providers 添加 `VergilLai\\SensitiveText\\Laravel\\SensitiveTextServiceProvider`；suggest 只写 Laravel 集成所需的 Illuminate support/redis 版本范围。`ext-redis` 已是生产强制依赖，不放在 suggest。
 
 - [ ] **Step 2: 写 provider 注册/无网络 singleton 测试并运行红灯。**
 
@@ -862,7 +864,7 @@ it('registers a lazy singleton independently of the static entry', function () {
 
 Run: `vendor/bin/pest tests/Integration/Laravel`；Expected: 缺 provider 失败。
 
-- [ ] **Step 3: 实现 provider/config/facade。** config 至少包含 redis.driver（默认 laravel，复用宿主 driver）、redis.connection（default）、redis.prefix、dictionary.key/version_key、normalizer 七个字段、version_check_interval=5、mask_character='*'、regex_rules=[]、whitelist.rules=[]、reload.policy='keep_last_good'、batch.driver='sync'。不支持的 policy/driver 拒绝，不假装已有不同策略。配置里的规则用纯数组和 enum 的标量值，由 provider 转为 DTO，保证 config:cache 可用。
+- [ ] **Step 3: 实现 provider/config/facade。** config 至少包含 redis.connection（default）、redis.prefix、dictionary.key/version_key、normalizer 七个字段、version_check_interval=5、mask_character='*'、regex_rules=[]、whitelist.rules=[]、reload.policy='keep_last_good'、batch.driver='sync'。不提供 redis.driver 配置；宿主连接必须由 Laravel phpredis driver 创建。拒绝不支持的 policy/batch driver，不假装已有不同策略。配置里的规则用纯数组和 enum 的标量值，由 provider 转为 DTO，保证 config:cache 可用。
 
 ```php
 public function register(): void
@@ -878,7 +880,7 @@ public function boot(): void
 }
 ```
 
-`buildScanner(array $config):SensitiveText` 私有，按 Task 10 同样构造对象。`redis.driver=laravel` 时用 LaravelRedisAdapter 的 lazy connection resolver，闭包仅捕获 Redis manager 和 connection name，不捕获 request/app snapshot；其他 driver 使用包自有 fromConfig。不在 provider boot/init 注册 Octane tick/worker 事件；不保存 request、user 或 facade result。
+`buildScanner(array $config):SensitiveText` 私有，按 Task 10 同样构造对象。始终使用 LaravelRedisAdapter 的 lazy connection resolver，闭包仅捕获 Redis manager 和 connection name，不捕获 request/app snapshot；解析后必须是 `PhpRedisConnection`，否则抛 `InvalidConfigurationException`，不降级为其他客户端或包自建连接。不在 provider boot/init 注册 Octane tick/worker 事件；不保存 request、user 或 facade result。
 
 `mask_character` 为结果调用的默认策略时，新增 `ScanResult` 第三构造参数 `string $defaultMask='*'`，`mask(?string $mask=null)` 使用显式参数优先；SensitiveText 构造末尾增 `string $maskCharacter='*'` 并将其传给 ScanResult，fromConfig 和 provider 同步。Task 4 所有原有调用仍兼容，增加配置 '#' 测试。
 
@@ -936,15 +938,16 @@ $matchesPerSecond = array_sum($samples) > 0 ? $emitted / (array_sum($samples) / 
 - [ ] **Step 1: 写 README 的可执行 Quick Start。** 安装命令、Redis 初始化和扫描必须连续可运行，不能让用户以为包自带业务敏感词。
 
 ```php
-use Predis\Client;
 use VergilLai\SensitiveText\Dictionary\RedisDictionaryRepository;
 use VergilLai\SensitiveText\Dictionary\SensitiveTerm;
-use VergilLai\SensitiveText\Redis\PredisClientAdapter;
+use VergilLai\SensitiveText\Redis\PhpRedisClientAdapter;
 use VergilLai\SensitiveText\Rules\Action;
 use VergilLai\SensitiveText\Rules\Severity;
 use VergilLai\SensitiveText\SensitiveText;
 
-$repository = new RedisDictionaryRepository(new PredisClientAdapter(new Client('tcp://127.0.0.1:6379')));
+$redis = new Redis();
+$redis->connect('127.0.0.1', 6379, 1.0);
+$repository = new RedisDictionaryRepository(new PhpRedisClientAdapter($redis));
 // 仅首次创建；后续发布传入实际 expectedVersion，冲突后重新读取与合并。
 $repository->publish([new SensitiveTerm('微信', 'contact', Severity::Medium, Action::Review)], null);
 $result = SensitiveText::instance()->scan('请加我微❤️信联系');
@@ -952,11 +955,11 @@ echo $result->matches()[0]->matchedText;
 echo $result->mask('*');
 ```
 
-README 依次覆盖 Installation、Requirements、Quick Start、Architecture、Redis Setup、Dictionary Format、Normalization、Aho-Corasick、Regex Rules、Whitelist、Mask、Dictionary Reload、Laravel Usage、Octane Usage、Batch Scanning、Performance、Worker Safety、Error Handling、Testing、PHPStan、PHP-CS-Fixer、Benchmark。完整列明公开 API 和默认策略；Laravel app()/Facade/config 发布两种示例；提及配置 prefix 与宿主 Redis prefix 不能重复叠加。
+README 依次覆盖 Installation、Requirements、Quick Start、Architecture、Redis Setup、Dictionary Format、Normalization、Aho-Corasick、Regex Rules、Whitelist、Mask、Dictionary Reload、Laravel Usage、Octane Usage、Batch Scanning、Performance、Worker Safety、Error Handling、Testing、PHPStan、PHP-CS-Fixer、Benchmark。Requirements 明确 ext-redis 为强制依赖，缺失时 Composer 阻止安装，不提供 fallback；Redis Cluster 不支持。完整列明公开 API 和默认策略；Laravel app()/Facade/config 发布两种示例，并注明连接必须使用 Laravel phpredis driver；提及配置 prefix 与宿主 Redis prefix 不能重复叠加。
 
 必须原样包括：`Fiber is not used in the core scan path.`；`Fork-based processing is intended for CLI/offline batch workloads only.`；`Compiled Automaton is reused inside long-running workers.`；`request-specific state is never stored on singleton services.`。说明 V1 只有同步 executor、周期轮询、invalidate 接口，无自建 Pub/Sub listener；说明 UTF-8 offsets、emoji mask 数量、非 semantic whitelist 和默认归一化对低误判的取舍。
 
-- [ ] **Step 2: CI 分真实 PHP 通道验证。** 工作流目标矩阵 PHP 8.2/8.3/8.4/8.5；8.2 用 Pest3+Testbench10，较新通道选择可兼容组合，Laravel13 通道只在 solver 成功且测试过后声明。CI 安装 intl/mbstring/redis，Redis service 健康就绪后置 `SENSITIVE_TEXT_REDIS_TESTS=1`。一条通道启用 PCOV/Xdebug 跑 85% coverage，其余不启用 coverage。加 8.2 `--prefer-lowest --prefer-stable` 通道检查最低依赖；不固定 platform 假装 PHP 8.2。
+- [ ] **Step 2: CI 分真实 PHP 通道验证。** 工作流目标矩阵 PHP 8.2/8.3/8.4/8.5；8.2 用 Pest3+Testbench10，较新通道选择可兼容组合，Laravel13 通道只在 solver 成功且测试过后声明。每个通道都必须安装 intl/mbstring/redis 扩展，不能忽略 ext-redis 平台要求；Redis service 健康就绪后置 `SENSITIVE_TEXT_REDIS_TESTS=1`。一条通道启用 PCOV/Xdebug 跑 85% coverage，其余不启用 coverage。加 8.2 `--prefer-lowest --prefer-stable` 通道检查最低依赖；不固定 platform 假装 PHP 8.2。
 
 ```yaml
 steps:
