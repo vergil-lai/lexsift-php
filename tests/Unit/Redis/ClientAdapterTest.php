@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use VergilLai\SensitiveText\Exception\InvalidConfigurationException;
 use VergilLai\SensitiveText\Exception\RedisUnavailableException;
 use VergilLai\SensitiveText\Redis\PhpRedisClientAdapter;
 use VergilLai\SensitiveText\Tests\Helpers\StubPhpRedisClient;
@@ -146,3 +147,108 @@ it('rejects unexpected get and compare-and-swap success results', function (stri
     'integer script result' => ['compare-and-swap', 1],
     'non-numeric script result' => ['compare-and-swap', 'ok'],
 ]);
+
+it('connects lazily with tls authentication database and both timeouts', function () {
+    $client = new StubPhpRedisClient();
+    $client->getResults = ['7'];
+    $adapter = PhpRedisClientAdapter::fromUrl(
+        'tls://app%20user:s3cr3t%21@redis.example.com:6380/4',
+        1.25,
+    );
+    $replaceClient = Closure::bind(
+        static function (PhpRedisClientAdapter $adapter, Redis $client): void {
+            $adapter->client = $client;
+        },
+        null,
+        PhpRedisClientAdapter::class,
+    );
+    $replaceClient($adapter, $client);
+
+    expect($client->connectCalls)->toBe([])
+        ->and($adapter->get('version'))->toBe('7')
+        ->and($client->connectCalls)->toBe([[
+            'host' => 'tls://redis.example.com',
+            'port' => 6380,
+            'timeout' => 1.25,
+            'persistentId' => null,
+            'retryInterval' => 0,
+            'readTimeout' => 1.25,
+            'context' => null,
+        ]])
+        ->and($client->authCalls)->toBe([['app user', 's3cr3t!']])
+        ->and($client->selectCalls)->toBe([4]);
+});
+
+it('supports password-only authentication and skips the default database selection', function () {
+    $client = new StubPhpRedisClient();
+    $client->getResults = [false];
+    $adapter = PhpRedisClientAdapter::fromUrl('tcp://:secret@localhost/0', 0.5);
+    $replaceClient = Closure::bind(
+        static function (PhpRedisClientAdapter $adapter, Redis $client): void {
+            $adapter->client = $client;
+        },
+        null,
+        PhpRedisClientAdapter::class,
+    );
+    $replaceClient($adapter, $client);
+
+    expect($adapter->get('missing'))->toBeNull()
+        ->and($client->connectCalls)->toBe([[
+            'host' => 'localhost',
+            'port' => 6379,
+            'timeout' => 0.5,
+            'persistentId' => null,
+            'retryInterval' => 0,
+            'readTimeout' => 0.5,
+            'context' => null,
+        ]])
+        ->and($client->authCalls)->toBe(['secret'])
+        ->and($client->selectCalls)->toBe([]);
+});
+
+it('rejects invalid redis urls without opening a connection', function (string $url) {
+    expect(fn() => PhpRedisClientAdapter::fromUrl($url, 1.0))
+        ->toThrow(InvalidConfigurationException::class);
+})->with([
+    'unsupported scheme' => 'redis://localhost:6379',
+    'missing host' => 'tcp:///1',
+    'invalid port' => 'tcp://localhost:70000',
+    'invalid database' => 'tcp://localhost/not-a-number',
+    'negative database' => 'tcp://localhost/-1',
+    'database overflow' => 'tcp://localhost/9223372036854775808',
+    'username without password' => 'tcp://user@localhost/0',
+    'query parameters' => 'tcp://localhost/0?timeout=2',
+]);
+
+it('rejects invalid redis timeouts', function (float $timeout) {
+    expect(fn() => PhpRedisClientAdapter::fromUrl('tcp://localhost', $timeout))
+        ->toThrow(InvalidConfigurationException::class);
+})->with([
+    'zero' => 0.0,
+    'negative' => -1.0,
+    'infinite' => INF,
+    'not a number' => NAN,
+]);
+
+it('does not expose redis credentials when connection setup fails', function () {
+    $client = new StubPhpRedisClient();
+    $client->authResult = false;
+    $url = 'tcp://private-user:private-password@redis.example.com:6379/2';
+    $adapter = PhpRedisClientAdapter::fromUrl($url, 1.0);
+    $replaceClient = Closure::bind(
+        static function (PhpRedisClientAdapter $adapter, Redis $client): void {
+            $adapter->client = $client;
+        },
+        null,
+        PhpRedisClientAdapter::class,
+    );
+    $replaceClient($adapter, $client);
+
+    try {
+        $adapter->get('version');
+        PHPUnit\Framework\Assert::fail('Expected RedisUnavailableException was not thrown.');
+    } catch (RedisUnavailableException $exception) {
+        expect($exception->getMessage())->not->toContain($url)
+            ->and($exception->getMessage())->not->toContain('private-password');
+    }
+});

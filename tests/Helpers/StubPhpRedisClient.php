@@ -9,6 +9,21 @@ use Throwable;
 
 final class StubPhpRedisClient extends Redis
 {
+    /** @var list<array{host: string, port: int, timeout: float, persistentId: ?string, retryInterval: int, readTimeout: float, context: ?array<mixed>}> */
+    public array $connectCalls = [];
+
+    /** @var list<mixed> */
+    public array $authCalls = [];
+
+    /** @var list<int> */
+    public array $selectCalls = [];
+
+    public bool $connectResult = true;
+
+    public bool $authResult = true;
+
+    public bool $selectResult = true;
+
     /** @var list<mixed> */
     public array $getResults = [];
 
@@ -30,6 +45,43 @@ final class StubPhpRedisClient extends Redis
     public array $evalCalls = [];
 
     private ?string $lastError = null;
+
+    /** @param array<mixed>|null $context */
+    public function connect(
+        string $host,
+        int $port = 6379,
+        float $timeout = 0,
+        ?string $persistent_id = null,
+        int $retry_interval = 0,
+        float $read_timeout = 0,
+        ?array $context = null,
+    ): bool {
+        $this->connectCalls[] = [
+            'host' => $host,
+            'port' => $port,
+            'timeout' => $timeout,
+            'persistentId' => $persistent_id,
+            'retryInterval' => $retry_interval,
+            'readTimeout' => $read_timeout,
+            'context' => $context,
+        ];
+
+        return $this->connectResult;
+    }
+
+    public function auth(mixed $credentials): bool
+    {
+        $this->authCalls[] = $credentials;
+
+        return $this->authResult;
+    }
+
+    public function select(int $db): bool
+    {
+        $this->selectCalls[] = $db;
+
+        return $this->selectResult;
+    }
 
     public function get(string $key): mixed
     {

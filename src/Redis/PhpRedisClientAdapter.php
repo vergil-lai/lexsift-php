@@ -6,6 +6,7 @@ namespace VergilLai\SensitiveText\Redis;
 
 use Redis;
 use VergilLai\SensitiveText\Contracts\RedisClientInterface;
+use VergilLai\SensitiveText\Exception\InvalidConfigurationException;
 use VergilLai\SensitiveText\Exception\RedisUnavailableException;
 
 final class PhpRedisClientAdapter implements RedisClientInterface
@@ -36,7 +37,72 @@ redis.call('MSET', KEYS[1], nextVersion, KEYS[2], ARGV[2])
 return nextVersion
 LUA;
 
-    public function __construct(private readonly Redis $client) {}
+    private bool $connected = true;
+
+    private string $host = '';
+
+    private int $port = 6379;
+
+    private float $timeout = 0.0;
+
+    private ?string $username = null;
+
+    private ?string $password = null;
+
+    private int $database = 0;
+
+    public function __construct(private Redis $client) {}
+
+    public static function fromUrl(string $url, float $timeout): self
+    {
+        if (!is_finite($timeout) || $timeout <= 0) {
+            throw new InvalidConfigurationException('Redis timeout must be finite and positive.');
+        }
+
+        $parts = parse_url($url);
+        if (!is_array($parts)) {
+            throw new InvalidConfigurationException('Redis URL is invalid.');
+        }
+
+        $scheme = strtolower($parts['scheme'] ?? '');
+        $host = $parts['host'] ?? '';
+        $port = $parts['port'] ?? 6379;
+        if (!in_array($scheme, ['tcp', 'tls'], true)
+            || '' === $host
+            || $port < 1
+            || isset($parts['query'])
+            || isset($parts['fragment'])) {
+            throw new InvalidConfigurationException('Redis URL is invalid.');
+        }
+
+        $path = $parts['path'] ?? '';
+        if ('' !== $path && '/' !== $path && 1 !== preg_match('#^/[0-9]+$#D', $path)) {
+            throw new InvalidConfigurationException('Redis URL database is invalid.');
+        }
+        $database = '' === $path || '/' === $path
+            ? 0
+            : filter_var(substr($path, 1), FILTER_VALIDATE_INT, ['options' => ['min_range' => 0]]);
+        if (false === $database) {
+            throw new InvalidConfigurationException('Redis URL database is invalid.');
+        }
+
+        $hasUsername = array_key_exists('user', $parts);
+        $hasPassword = array_key_exists('pass', $parts);
+        if ($hasUsername && !$hasPassword) {
+            throw new InvalidConfigurationException('Redis URL authentication is invalid.');
+        }
+
+        $client = new self(new Redis());
+        $client->connected = false;
+        $client->host = 'tls' === $scheme ? 'tls://' . $host : $host;
+        $client->port = $port;
+        $client->timeout = $timeout;
+        $client->username = $hasUsername && '' !== $parts['user'] ? rawurldecode($parts['user']) : null;
+        $client->password = $hasPassword ? rawurldecode($parts['pass']) : null;
+        $client->database = $database;
+
+        return $client;
+    }
 
     public function get(string $key): ?string
     {
@@ -97,6 +163,8 @@ LUA;
 
     private function execute(string $operation, callable $command): mixed
     {
+        $this->connectIfNeeded();
+
         try {
             $this->client->clearLastError();
             $result = $command();
@@ -110,6 +178,36 @@ LUA;
         }
 
         return $result;
+    }
+
+    private function connectIfNeeded(): void
+    {
+        if ($this->connected) {
+            return;
+        }
+
+        try {
+            if (!$this->client->connect($this->host, $this->port, $this->timeout, null, 0, $this->timeout)) {
+                throw new \RuntimeException('Connect returned false.');
+            }
+
+            if (null !== $this->password) {
+                $credentials = null === $this->username
+                    ? $this->password
+                    : [$this->username, $this->password];
+                if (false === $this->client->auth($credentials)) {
+                    throw new \RuntimeException('Authentication returned false.');
+                }
+            }
+
+            if (0 !== $this->database && false === $this->client->select($this->database)) {
+                throw new \RuntimeException('Database selection returned false.');
+            }
+        } catch (\Throwable) {
+            throw new RedisUnavailableException('Redis connection setup failed.');
+        }
+
+        $this->connected = true;
     }
 
     private function nullableString(mixed $value, string $operation): ?string

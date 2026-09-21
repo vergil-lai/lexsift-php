@@ -9,12 +9,17 @@ use VergilLai\SensitiveText\Contracts\DictionaryRepositoryInterface;
 use VergilLai\SensitiveText\Contracts\MatcherInterface;
 use VergilLai\SensitiveText\Dictionary\CompiledDictionary;
 use VergilLai\SensitiveText\Dictionary\DictionaryCompiler;
+use VergilLai\SensitiveText\Dictionary\RedisDictionaryRepository;
 use VergilLai\SensitiveText\Exception\DictionaryException;
 use VergilLai\SensitiveText\Exception\InvalidConfigurationException;
+use VergilLai\SensitiveText\Matcher\AhoCorasickMatcher;
+use VergilLai\SensitiveText\Matcher\RegexMatcher;
 use VergilLai\SensitiveText\Matcher\WhitelistMatcher;
 use VergilLai\SensitiveText\Normalizer\TextNormalizer;
+use VergilLai\SensitiveText\Redis\PhpRedisClientAdapter;
 use VergilLai\SensitiveText\Result\ScannerStats;
 use VergilLai\SensitiveText\Result\ScanResult;
+use VergilLai\SensitiveText\Support\DefaultScanner;
 use VergilLai\SensitiveText\Support\SystemClock;
 
 final class SensitiveText
@@ -59,6 +64,29 @@ final class SensitiveText
         $this->compiler = $compiler ?? new DictionaryCompiler($normalizer);
         $this->whitelist = $whitelist ?? new WhitelistMatcher($normalizer, []);
         $this->clock = $clock ?? new SystemClock();
+    }
+
+    public static function instance(): self
+    {
+        return DefaultScanner::instance();
+    }
+
+    public static function fromConfig(SensitiveTextConfig $config): self
+    {
+        $normalizer = new TextNormalizer($config->normalizer);
+
+        return new self(
+            $normalizer,
+            new RedisDictionaryRepository(
+                PhpRedisClientAdapter::fromUrl($config->redisUrl, $config->redisTimeout),
+                $config->redisPrefix,
+                $config->dictionaryKey,
+                $config->versionKey,
+            ),
+            [new AhoCorasickMatcher(), new RegexMatcher($config->regexRules)],
+            whitelist: new WhitelistMatcher($normalizer, $config->whitelistRules),
+            versionCheckInterval: $config->versionCheckInterval,
+        );
     }
 
     public function scan(string $text): ScanResult
