@@ -945,7 +945,7 @@ use VergilLai\SensitiveText\Rules\Action;
 use VergilLai\SensitiveText\Rules\Severity;
 use VergilLai\SensitiveText\SensitiveText;
 
-$redis = new Redis();
+$redis = new \Redis();
 $redis->connect('127.0.0.1', 6379, 1.0);
 $repository = new RedisDictionaryRepository(new PhpRedisClientAdapter($redis));
 // 仅首次创建；后续发布传入实际 expectedVersion，冲突后重新读取与合并。
@@ -979,7 +979,24 @@ steps:
 
 以上 steps 放入 matrix job 并补 `services.redis.image: redis:7`、端口 6379、redis-cli ping health check；coverage 独立 job 覆盖设置为 pcov 并运行 composer test:coverage；执行时按官方 action 元数据核对版本/固定 SHA，不为此升级业务依赖。PHPStan max 不允许测试目录被偷偷排除。
 
-- [ ] **Step 3: 发布前外部消费 smoke。** `composer archive --format=zip --dir=/tmp/sensitive-text-release`；解包到临时目录，独立 Composer consumer 以 path repository 安装该包 `--no-dev`，运行真实 Redis 示例并确认依赖没有 Illuminate/Pest/PHPStan；对另一临时 Laravel consumer 验证 discovery 和 Facade。`.gitattributes` export-ignore `/tests`、`/benchmarks`、`/.github`、`/docs/superpowers`、开发工具配置；保留 README、LICENSE、config 和生产 src。archive 与可实际在 Packagist 下载安装不同，不能把本地 smoke 当作已经发布。
+- [ ] **Step 3: 发布前外部消费 smoke。** `composer archive --format=zip --dir=/tmp/sensitive-text-release`；解包到临时目录，独立 Composer consumer 以 path repository 安装该包 `--no-dev`，运行真实 Redis 示例并确认安装集合没有 Illuminate/Pest/PHPStan。consumer 内必须执行下面的安装集合断言与平台检查：Predis 一旦存在就令 smoke 失败，`composer check-platform-reqs` 必须明确显示 ext-redis 通过；不能只检查源包的 composer.json。对另一临时 Laravel consumer 验证 discovery 和 Facade。`.gitattributes` export-ignore `/tests`、`/benchmarks`、`/.github`、`/docs/superpowers`、开发工具配置；保留 README、LICENSE、config 和生产 src。archive 与可实际在 Packagist 下载安装不同，不能把本地 smoke 当作已经发布。
+
+```bash
+if predis_output=$(composer show predis/predis 2>&1); then
+  echo 'Unexpected dependency: predis/predis'
+  exit 1
+else
+  predis_status=$?
+fi
+printf '%s\n' "$predis_output"
+if [ "$predis_status" -ne 1 ] || ! printf '%s\n' "$predis_output" | grep -Fq 'Package "predis/predis" not found'; then
+  echo 'Unexpected composer show failure'
+  exit "$predis_status"
+fi
+composer check-platform-reqs
+```
+
+记录 `Package "predis/predis" not found` 或等价的未安装结果，以及 `ext-redis ... success`；前者的预期非零只用于该缺席断言，其他 Composer 错误仍使 smoke 失败。
 
 - [ ] **Step 4: 执行最终验收并记录证据。**
 
