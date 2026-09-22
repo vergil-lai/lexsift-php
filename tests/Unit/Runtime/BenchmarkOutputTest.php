@@ -2,10 +2,13 @@
 
 declare(strict_types=1);
 
+use VergilLai\SensitiveText\Contracts\DictionaryRepositoryInterface;
 use VergilLai\SensitiveText\Dictionary\DictionaryCompiler;
 use VergilLai\SensitiveText\Dictionary\SensitiveDictionary;
 use VergilLai\SensitiveText\Dictionary\SensitiveTerm;
 use VergilLai\SensitiveText\Normalizer\TextNormalizer;
+
+require_once dirname(__DIR__, 3) . '/benchmarks/worker.php';
 
 it('emits a finite smoke benchmark result for every scan shape', function () {
     $worker = dirname(__DIR__, 3) . '/benchmarks/worker.php';
@@ -89,4 +92,32 @@ it('defines finite per-node memory for a compiled dictionary', function () {
 
     expect(count($dictionary->transitions))->toBeGreaterThan(0)
         ->and(is_finite($dictionary->estimatedMemoryBytes / count($dictionary->transitions)))->toBeTrue();
+});
+
+it('starts a redis cold scan with the scanners first snapshot load', function () {
+    $repository = new class (new SensitiveDictionary('redis-v1', [new SensitiveTerm('敏感词')])) implements DictionaryRepositoryInterface {
+        public int $loadCalls = 0;
+
+        public function __construct(private readonly SensitiveDictionary $snapshot) {}
+
+        public function version(): string
+        {
+            return $this->snapshot->version;
+        }
+
+        public function load(): SensitiveDictionary
+        {
+            ++$this->loadCalls;
+
+            return $this->snapshot;
+        }
+    };
+
+    $result = benchmarkRedisRepository($repository, '这是敏感词');
+
+    expect($repository->loadCalls)->toBe(2)
+        ->and($result['dictionaryVersion'])->toBe('redis-v1')
+        ->and($result['terms'])->toBe(1)
+        ->and($result['coldScanMs'])->toBeGreaterThanOrEqual(0.0)
+        ->and($result['reloadMs'])->toBeGreaterThanOrEqual(0.0);
 });

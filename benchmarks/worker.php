@@ -229,6 +229,37 @@ function benchmarkPathologies(TextNormalizer $normalizer): array
 /**
  * @return array{coldScanMs: float, reloadMs: float, dictionaryVersion: string, terms: int}
  */
+function benchmarkRedisRepository(DictionaryRepositoryInterface $repository, string $text): array
+{
+    $scanner = new SensitiveText(
+        new TextNormalizer(),
+        $repository,
+        [new AhoCorasickMatcher()],
+        versionCheckInterval: PHP_FLOAT_MAX,
+    );
+    $startedAt = hrtime(true);
+    $scanner->scan($text);
+    $coldScanMs = (hrtime(true) - $startedAt) / 1_000_000;
+    $stats = $scanner->stats();
+    $dictionaryVersion = $stats->dictionaryVersion;
+    if (null === $dictionaryVersion) {
+        throw new LogicException('Cold Redis scan did not load a dictionary snapshot.');
+    }
+    $startedAt = hrtime(true);
+    $scanner->reload();
+    $reloadMs = (hrtime(true) - $startedAt) / 1_000_000;
+
+    return [
+        'coldScanMs' => $coldScanMs,
+        'reloadMs' => $reloadMs,
+        'dictionaryVersion' => $dictionaryVersion,
+        'terms' => $stats->termCount,
+    ];
+}
+
+/**
+ * @return array{coldScanMs: float, reloadMs: float, dictionaryVersion: string, terms: int}
+ */
 function benchmarkRedis(string $text): array
 {
     $redisUrl = getenv('SENSITIVE_TEXT_BENCHMARK_REDIS_URL');
@@ -246,26 +277,13 @@ function benchmarkRedis(string $text): array
         PhpRedisClientAdapter::fromUrl($redisUrl, 1.0),
         $prefix,
     );
-    $snapshot = $repository->load();
-    $scanner = new SensitiveText(
-        new TextNormalizer(),
-        $repository,
-        [new AhoCorasickMatcher()],
-        versionCheckInterval: PHP_FLOAT_MAX,
-    );
-    $startedAt = hrtime(true);
-    $scanner->scan($text);
-    $coldScanMs = (hrtime(true) - $startedAt) / 1_000_000;
-    $startedAt = hrtime(true);
-    $scanner->reload();
-    $reloadMs = (hrtime(true) - $startedAt) / 1_000_000;
 
-    return [
-        'coldScanMs' => $coldScanMs,
-        'reloadMs' => $reloadMs,
-        'dictionaryVersion' => $snapshot->version,
-        'terms' => count($snapshot->terms),
-    ];
+    return benchmarkRedisRepository($repository, $text);
+}
+
+$scriptFilename = $_SERVER['SCRIPT_FILENAME'] ?? null;
+if (!is_string($scriptFilename) || realpath($scriptFilename) !== __FILE__) {
+    return;
 }
 
 try {

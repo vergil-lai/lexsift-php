@@ -112,7 +112,11 @@ php benchmarks/worker.php 1000 1000 3 --redis
 ```
 
 The additional `redis` object reports network-inclusive cold and reload times;
-it is not mixed into the algorithm fields. This baseline did not run Redis mode.
+it is not mixed into the algorithm fields. Redis cold timing starts immediately
+before the scanner's first `scan()`, so it includes lazy connection,
+authentication/database selection, snapshot loading, compilation, normalization,
+matching, and result allocation. There is no untimed preflight load. This
+baseline did not run Redis mode.
 
 V1 uses the synchronous batch executor. There is no Fork executor, so this
 document does not invent a Sync/Fork comparison and does not recommend
