@@ -88,10 +88,10 @@ final class TextNormalizer
                     );
                 }
             } else {
-                foreach ($sourcePoints as $pointIndex => $character) {
+                foreach ($sourcePoints as $character) {
                     $atoms[] = $this->atom(
                         $character,
-                        new SourceSpan($sourceIndex + $pointIndex, $sourceIndex + $pointIndex + 1),
+                        new SourceSpan($sourceIndex, $clusterEnd),
                         $ordinal++,
                         $isEmoji,
                     );

@@ -56,13 +56,28 @@ final readonly class NormalizedText
             throw new NormalizationException('Invalid original interval');
         }
 
-        $characters = [];
-        foreach ($this->offsetMap as $index => $span) {
-            if ($span->start < $end && $span->end > $start) {
-                $characters[] = $this->characters[$index];
+        $left = 0;
+        $right = count($this->offsetMap);
+        while ($left < $right) {
+            $mid = intdiv($left + $right, 2);
+            if ($this->offsetMap[$mid]->end <= $start) {
+                $left = $mid + 1;
+            } else {
+                $right = $mid;
+            }
+        }
+        $rangeStart = $left;
+
+        $right = count($this->offsetMap);
+        while ($left < $right) {
+            $mid = intdiv($left + $right, 2);
+            if ($this->offsetMap[$mid]->start < $end) {
+                $left = $mid + 1;
+            } else {
+                $right = $mid;
             }
         }
 
-        return implode('', $characters);
+        return implode('', array_slice($this->characters, $rangeStart, $left - $rangeStart));
     }
 }

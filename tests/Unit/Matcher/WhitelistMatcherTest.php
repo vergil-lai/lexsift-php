@@ -45,6 +45,39 @@ it('only removes matches whose normalized interval equals an exact whitelist rul
         ->and($kept[0]->term)->toBe('博彩平台');
 });
 
+it('uses the whole normalized source cluster for exact whitelist rules', function () {
+    $normalizer = new TextNormalizer();
+    $normalized = $normalizer->normalize('ﬃ');
+    $dictionary = (new DictionaryCompiler($normalizer))->compile(new SensitiveDictionary('1', [
+        new SensitiveTerm('f'),
+    ]));
+    $matches = (new AhoCorasickMatcher())->match($normalized, $dictionary);
+
+    $keptByPartialRule = (new WhitelistMatcher($normalizer, [
+        new WhitelistRule('f', WhitelistMode::Exact),
+    ]))->filter($normalized, $matches);
+    $keptByWholeClusterRule = (new WhitelistMatcher($normalizer, [
+        new WhitelistRule('ffi', WhitelistMode::Exact),
+    ]))->filter($normalized, $matches);
+
+    expect($keptByPartialRule)->toHaveCount(2)
+        ->and($keptByWholeClusterRule)->toBe([]);
+});
+
+it('keeps dense matches when exact rules are absent', function () {
+    $normalizer = new TextNormalizer();
+    $normalized = $normalizer->normalize(str_repeat('a', 2_000));
+    $dictionary = (new DictionaryCompiler($normalizer))->compile(new SensitiveDictionary('1', [
+        new SensitiveTerm('a'),
+    ]));
+    $matches = (new AhoCorasickMatcher())->match($normalized, $dictionary);
+
+    expect((new WhitelistMatcher($normalizer, []))->filter($normalized, $matches))->toBe($matches)
+        ->and((new WhitelistMatcher($normalizer, [
+            new WhitelistRule('unrelated phrase'),
+        ]))->filter($normalized, $matches))->toBe($matches);
+});
+
 it('keeps a match that only partially overlaps a whitelisted phrase', function () {
     $normalizer = new TextNormalizer();
     $normalized = $normalizer->normalize('反博彩平台');

@@ -51,6 +51,54 @@ it('returns normalized characters intersecting an original interval', function (
         ->and($normalized->normalizedRangeForOriginal(3, 7))->toBe('ffi中');
 });
 
+it('looks up a narrow original range without scanning the full normalized text', function () {
+    $measure = static function (int $size): int {
+        $characters = array_fill(0, $size, 'a');
+        $offsetMap = [];
+        for ($index = 0; $index < $size; ++$index) {
+            $offsetMap[] = new SourceSpan($index, $index + 1);
+        }
+
+        $normalized = new \VergilLai\SensitiveText\Normalizer\NormalizedText(
+            str_repeat('a', $size),
+            str_repeat('a', $size),
+            $characters,
+            $offsetMap,
+            range(0, $size),
+        );
+        expect($normalized->normalizedRangeForOriginal($size - 1, $size))->toBe('a');
+
+        $startedAt = hrtime(true);
+        for ($query = 0; $query < 2_000; ++$query) {
+            $normalized->normalizedRangeForOriginal($size - 1, $size);
+        }
+
+        return hrtime(true) - $startedAt;
+    };
+
+    $small = $measure(1_000);
+    $large = $measure(4_000);
+
+    expect($large / max(1, $small))->toBeLessThan(2.5);
+});
+
+it('maps every unnormalized code point to its complete source cluster', function () {
+    $normalized = (new TextNormalizer(new NormalizerConfig(
+        unicodeNfkc: false,
+        lowercase: false,
+        removeWhitespace: false,
+        removeEmoji: false,
+    )))->normalize("a\u{0315}");
+
+    expect(array_map(
+        static fn(SourceSpan $span): array => [$span->start, $span->end],
+        $normalized->offsetMap,
+    ))->toBe([
+        [0, 2],
+        [0, 2],
+    ]);
+});
+
 it('stores byte offsets for original code point boundaries', function () {
     $normalized = (new TextNormalizer())->normalize('A微❤️');
 

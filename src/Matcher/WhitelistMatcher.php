@@ -64,7 +64,15 @@ final class WhitelistMatcher
      */
     public function filter(NormalizedText $text, array $matches): array
     {
-        $phraseMatches = (new AhoCorasickMatcher())->match($text, $this->phraseDictionary);
+        $hasExactRules = [] !== $this->exactTerms;
+        $hasPhraseRules = [] !== $this->phraseDictionary->terms;
+        if (!$hasExactRules && !$hasPhraseRules) {
+            return $matches;
+        }
+
+        $phraseMatches = $hasPhraseRules
+            ? (new AhoCorasickMatcher())->match($text, $this->phraseDictionary)
+            : [];
         usort($phraseMatches, static fn(MatchResult $left, MatchResult $right): int => [
             $left->start,
             $left->end,
@@ -82,12 +90,24 @@ final class WhitelistMatcher
             $prefixMaxEnds[] = $maxEnd;
         }
 
+        $normalizedRanges = [];
+
         return array_values(array_filter(
             $matches,
-            function (MatchResult $match) use ($text, $phraseStarts, $prefixMaxEnds): bool {
-                $normalizedMatch = $text->normalizedRangeForOriginal($match->start, $match->end);
-                if (isset($this->exactTerms[$normalizedMatch])) {
-                    return false;
+            function (MatchResult $match) use (
+                $hasExactRules,
+                $text,
+                $phraseStarts,
+                $prefixMaxEnds,
+                &$normalizedRanges,
+            ): bool {
+                if ($hasExactRules) {
+                    $rangeKey = $match->start . ':' . $match->end;
+                    $normalizedMatch = $normalizedRanges[$rangeKey]
+                        ??= $text->normalizedRangeForOriginal($match->start, $match->end);
+                    if (isset($this->exactTerms[$normalizedMatch])) {
+                        return false;
+                    }
                 }
 
                 $left = 0;

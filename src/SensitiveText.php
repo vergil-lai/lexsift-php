@@ -58,8 +58,8 @@ final class SensitiveText
         if ([] === $matchers) {
             throw new InvalidConfigurationException('At least one matcher is required.');
         }
-        if ($versionCheckInterval < 0) {
-            throw new InvalidConfigurationException('Version check interval must not be negative.');
+        if (!is_finite($versionCheckInterval) || $versionCheckInterval < 0) {
+            throw new InvalidConfigurationException('Version check interval must be finite and not negative.');
         }
         if (!mb_check_encoding($maskCharacter, 'UTF-8') || mb_strlen($maskCharacter, 'UTF-8') > 1) {
             throw new InvalidConfigurationException('Mask must be empty or a single valid UTF-8 codepoint.');

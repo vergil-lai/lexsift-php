@@ -187,6 +187,20 @@ it('keeps an existing result immutable across reloads', function () {
         ->and($scanner->scan('微信')->matched())->toBeFalse();
 });
 
+it('masks a complete source cluster when unicode normalization is disabled', function () {
+    $repo = new FakeRepository(new SensitiveDictionary('1', [new SensitiveTerm('a')]));
+    $scanner = new SensitiveText(
+        new TextNormalizer(new NormalizerConfig(unicodeNfkc: false)),
+        $repo,
+        [new AhoCorasickMatcher()],
+    );
+
+    $result = $scanner->scan("a\u{0315}");
+
+    expect([$result->matches()[0]->start, $result->matches()[0]->end])->toBe([0, 2])
+        ->and($result->mask())->toBe('**');
+});
+
 it('validates scanner construction', function () {
     $repo = new FakeRepository(new SensitiveDictionary('1', []));
 
@@ -197,6 +211,24 @@ it('validates scanner construction', function () {
             $repo,
             [new AhoCorasickMatcher()],
             versionCheckInterval: -0.1,
+        ))->toThrow(InvalidConfigurationException::class)
+        ->and(fn() => new SensitiveText(
+            new TextNormalizer(),
+            $repo,
+            [new AhoCorasickMatcher()],
+            versionCheckInterval: NAN,
+        ))->toThrow(InvalidConfigurationException::class)
+        ->and(fn() => new SensitiveText(
+            new TextNormalizer(),
+            $repo,
+            [new AhoCorasickMatcher()],
+            versionCheckInterval: INF,
+        ))->toThrow(InvalidConfigurationException::class)
+        ->and(fn() => new SensitiveText(
+            new TextNormalizer(),
+            $repo,
+            [new AhoCorasickMatcher()],
+            versionCheckInterval: -INF,
         ))->toThrow(InvalidConfigurationException::class);
 });
 

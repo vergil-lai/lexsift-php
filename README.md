@@ -186,7 +186,7 @@ PCRE's normal non-overlapping behavior applies within one rule. Matches from sep
 
 ## Whitelist
 
-Whitelist rules suppress detected ranges; they do not make a semantic decision about intent. `Phrase` mode suppresses matches contained by an occurrence of the whitelist text. `Exact` mode suppresses only a match with the same original range.
+Whitelist rules suppress detected ranges; they do not make a semantic decision about intent. `Phrase` mode suppresses matches contained by an occurrence of the whitelist text. `Exact` mode suppresses only a match whose original interval normalizes to the same text as the whitelist rule.
 
 ```php
 use VergilLai\SensitiveText\Rules\WhitelistMode;

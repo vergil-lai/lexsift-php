@@ -7,7 +7,7 @@ sensitive_text:dictionary
 sensitive_text:dictionary:version
 ```
 
-构造 `RedisDictionaryRepository` 时可以分别配置 prefix、词库 key 后缀和版本 key 后缀。两个最终 key 必须位于同一个 Redis primary；V1 支持单 primary 或 Sentinel 选出的 primary，不支持 Redis Cluster 的跨槽 key。
+构造 `RedisDictionaryRepository` 时可以分别配置 prefix、词库 key 后缀和版本 key 后缀。两个最终 key 必须位于同一个 Redis primary；V1 支持单 primary 或 Sentinel 选出的 primary，完全不支持 Redis Cluster，即使两个 key 位于同一 slot 也不例外。
 
 ## Payload
 
