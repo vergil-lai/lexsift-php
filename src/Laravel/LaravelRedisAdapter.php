@@ -141,7 +141,13 @@ LUA;
             throw $this->unavailableException($operation, $exception);
         }
 
-        return $this->connection = $this->validateConnection($connection);
+        try {
+            return $this->connection = $this->validateConnection($connection);
+        } catch (InvalidConfigurationException $exception) {
+            throw $exception;
+        } catch (\Throwable $exception) {
+            throw $this->unavailableException($operation, $exception);
+        }
     }
 
     /** @param callable(PhpRedisConnection): mixed $command */

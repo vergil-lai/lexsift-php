@@ -97,6 +97,30 @@ it('sanitizes lazy resolver failures and their exception chain', function () {
     }
 });
 
+it('sanitizes failures while validating a lazily resolved phpredis client', function () {
+    $connection = new class (new Redis()) extends PhpRedisConnection {
+        public function client()
+        {
+            throw new UnexpectedValueException('redis://user:client-secret@example.test');
+        }
+    };
+    $adapter = LaravelRedisAdapter::lazy(static fn(): PhpRedisConnection => $connection);
+
+    try {
+        $adapter->get('key');
+        PHPUnit\Framework\Assert::fail('Expected RedisUnavailableException was not thrown.');
+    } catch (RedisUnavailableException $exception) {
+        expect($exception->getMessage())->toBe('Redis GET failed.')
+            ->and((string) $exception)->not->toContain('client-secret')
+            ->and($exception->getPrevious())->toBeInstanceOf(RuntimeException::class)
+            ->and($exception->getPrevious()?->getMessage())->toBe(
+                'Redis dependency raised UnexpectedValueException.',
+            )
+            ->and((string) $exception->getPrevious())->not->toContain('client-secret')
+            ->and($exception->getPrevious()?->getPrevious())->toBeNull();
+    }
+});
+
 it('sanitizes Laravel Redis command failures and their exception chain', function () {
     $connection = new StubLaravelRedisConnection([new LogicException('redis://user:command-secret@example.test')]);
 
