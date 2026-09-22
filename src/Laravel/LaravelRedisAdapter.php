@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace VergilLai\SensitiveText\Laravel;
 
 use Closure;
+use Illuminate\Redis\Connections\PhpRedisClusterConnection;
 use Illuminate\Redis\Connections\PhpRedisConnection;
+use Redis;
 use VergilLai\SensitiveText\Contracts\RedisClientInterface;
 use VergilLai\SensitiveText\Exception\InvalidConfigurationException;
 use VergilLai\SensitiveText\Exception\RedisUnavailableException;
@@ -45,7 +47,7 @@ LUA;
     public function __construct(mixed $connection)
     {
         if ($connection instanceof PhpRedisConnection) {
-            $this->connection = $connection;
+            $this->connection = $this->validateConnection($connection);
 
             return;
         }
@@ -65,7 +67,7 @@ LUA;
 
     public function get(string $key): ?string
     {
-        $raw = $this->execute('GET', fn(): mixed => $this->resolveConnection()->get($key));
+        $raw = $this->execute('GET', static fn(PhpRedisConnection $connection): mixed => $connection->get($key));
         if (null === $raw || false === $raw) {
             return null;
         }
@@ -80,7 +82,7 @@ LUA;
     {
         $raw = $this->execute(
             'snapshot script',
-            fn(): mixed => $this->resolveConnection()->eval(
+            static fn(PhpRedisConnection $connection): mixed => $connection->eval(
                 self::READ_SNAPSHOT_SCRIPT,
                 2,
                 $versionKey,
@@ -105,7 +107,7 @@ LUA;
     ): ?string {
         $raw = $this->execute(
             'compare-and-swap script',
-            fn(): mixed => $this->resolveConnection()->eval(
+            static fn(PhpRedisConnection $connection): mixed => $connection->eval(
                 self::COMPARE_AND_SWAP_SCRIPT,
                 2,
                 $versionKey,
@@ -133,22 +135,32 @@ LUA;
         $connection = ($this->resolver ?? throw new InvalidConfigurationException(
             'Laravel Redis connection resolver is missing.',
         ))();
-        if (!$connection instanceof PhpRedisConnection) {
-            throw new InvalidConfigurationException('Laravel Redis connection must use the phpredis driver.');
-        }
-
-        return $this->connection = $connection;
+        return $this->connection = $this->validateConnection($connection);
     }
 
+    /** @param callable(PhpRedisConnection): mixed $command */
     private function execute(string $operation, callable $command): mixed
     {
+        $connection = $this->resolveConnection();
+        $client = $this->phpRedisClient($connection);
         try {
-            return $command();
+            $client->clearLastError();
+            $result = $command($connection);
+            $error = $this->phpRedisClient($connection)->getLastError();
         } catch (InvalidConfigurationException $exception) {
             throw $exception;
         } catch (\Throwable $exception) {
             throw new RedisUnavailableException("Redis {$operation} failed.", previous: $exception);
         }
+
+        if (null !== $error) {
+            throw new RedisUnavailableException(
+                "Redis {$operation} failed.",
+                previous: new \RuntimeException('Redis server reported an error.'),
+            );
+        }
+
+        return $result;
     }
 
     private function nullableString(mixed $value, string $operation): ?string
@@ -161,5 +173,25 @@ LUA;
         }
 
         return $value;
+    }
+
+    private function validateConnection(mixed $connection): PhpRedisConnection
+    {
+        if (!$connection instanceof PhpRedisConnection || $connection instanceof PhpRedisClusterConnection) {
+            throw new InvalidConfigurationException('Laravel Redis connection must use the phpredis driver.');
+        }
+        $this->phpRedisClient($connection);
+
+        return $connection;
+    }
+
+    private function phpRedisClient(PhpRedisConnection $connection): Redis
+    {
+        $client = $connection->client();
+        if (!$client instanceof Redis) {
+            throw new InvalidConfigurationException('Laravel Redis connection must wrap a phpredis Redis client.');
+        }
+
+        return $client;
     }
 }

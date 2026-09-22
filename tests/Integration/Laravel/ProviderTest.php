@@ -8,6 +8,7 @@ use Illuminate\Contracts\Config\Repository as ConfigRepository;
 use Illuminate\Foundation\Application;
 use VergilLai\SensitiveText\Dictionary\DictionaryJsonCodec;
 use VergilLai\SensitiveText\Exception\InvalidConfigurationException;
+use VergilLai\SensitiveText\Exception\InvalidRuleException;
 use VergilLai\SensitiveText\Laravel\Facades\SensitiveText as SensitiveTextFacade;
 use VergilLai\SensitiveText\Rules\Action;
 use VergilLai\SensitiveText\Rules\Severity;
@@ -146,6 +147,43 @@ final class ProviderTest extends TestCase
         }
     }
 
+    public function test_it_rejects_invalid_shared_configuration_before_scanner_construction(): void
+    {
+        $app = $this->application();
+        $repository = $app->make(ConfigRepository::class);
+        $defaults = $this->associativeArray($repository->get('sensitive-text'), 'sensitive-text');
+        foreach ([
+            ['version_check_interval' => -0.1],
+            ['version_check_interval' => INF],
+            ['version_check_interval' => NAN],
+            ['dictionary' => ['key' => '', 'version_key' => 'dictionary:version']],
+            ['dictionary' => ['key' => 'dictionary', 'version_key' => '']],
+            ['dictionary' => ['key' => 'same', 'version_key' => 'same']],
+        ] as $override) {
+            $repository->set('sensitive-text', array_replace_recursive($defaults, $override));
+            $app->forgetInstance(SensitiveText::class);
+
+            expect(fn() => $app->make(SensitiveText::class))
+                ->toThrow(InvalidConfigurationException::class);
+        }
+    }
+
+    public function test_it_wraps_invalid_regex_configuration_and_preserves_the_cause(): void
+    {
+        $app = $this->application();
+        $repository = $app->make(ConfigRepository::class);
+        $repository->set('sensitive-text.regex_rules', [[
+            'id' => 'broken',
+            'pattern' => '/[/u',
+        ]]);
+        $app->forgetInstance(SensitiveText::class);
+
+        $exception = $this->configurationException(static fn() => $app->make(SensitiveText::class));
+
+        self::assertSame('Configuration [regex_rules] contains an invalid rule.', $exception->getMessage());
+        self::assertInstanceOf(InvalidRuleException::class, $exception->getPrevious());
+    }
+
     public function test_it_maps_cached_scalar_rules_and_reuses_one_lazy_scanner_across_requests(): void
     {
         $app = $this->application();
@@ -224,6 +262,17 @@ final class ProviderTest extends TestCase
         }
 
         return $this->app;
+    }
+
+    private function configurationException(callable $callback): InvalidConfigurationException
+    {
+        try {
+            $callback();
+        } catch (InvalidConfigurationException $exception) {
+            return $exception;
+        }
+
+        self::fail('Expected InvalidConfigurationException was not thrown.');
     }
 
     /** @param array<string, bool|string> $parameters */

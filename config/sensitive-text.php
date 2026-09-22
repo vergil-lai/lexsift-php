@@ -3,6 +3,8 @@
 declare(strict_types=1);
 
 return [
+    // Connection timeout/read_timeout belong in Laravel's config/database.php;
+    // this package reuses the named connection and never mutates its shared client.
     'redis' => [
         'connection' => 'default',
         'prefix' => 'sensitive_text:',

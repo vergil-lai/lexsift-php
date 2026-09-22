@@ -10,6 +10,7 @@ use Illuminate\Contracts\Redis\Factory as RedisFactory;
 use Illuminate\Support\ServiceProvider;
 use VergilLai\SensitiveText\Dictionary\RedisDictionaryRepository;
 use VergilLai\SensitiveText\Exception\InvalidConfigurationException;
+use VergilLai\SensitiveText\Exception\InvalidRuleException;
 use VergilLai\SensitiveText\Matcher\AhoCorasickMatcher;
 use VergilLai\SensitiveText\Matcher\RegexMatcher;
 use VergilLai\SensitiveText\Matcher\WhitelistMatcher;
@@ -22,6 +23,7 @@ use VergilLai\SensitiveText\Rules\Severity;
 use VergilLai\SensitiveText\Rules\WhitelistMode;
 use VergilLai\SensitiveText\Rules\WhitelistRule;
 use VergilLai\SensitiveText\SensitiveText;
+use VergilLai\SensitiveText\SensitiveTextConfig;
 
 final class SensitiveTextServiceProvider extends ServiceProvider
 {
@@ -61,7 +63,7 @@ final class SensitiveTextServiceProvider extends ServiceProvider
             throw new InvalidConfigurationException('Laravel Redis driver must be phpredis.');
         }
 
-        $normalizer = new TextNormalizer(new NormalizerConfig(
+        $normalizerConfig = new NormalizerConfig(
             unicodeNfkc: $this->boolValue($normalizerConfig['unicode_nfkc'] ?? null, 'normalizer.unicode_nfkc'),
             lowercase: $this->boolValue($normalizerConfig['lowercase'] ?? null, 'normalizer.lowercase'),
             removeWhitespace: $this->boolValue(
@@ -81,7 +83,23 @@ final class SensitiveTextServiceProvider extends ServiceProvider
                 $normalizerConfig['remove_characters'] ?? null,
                 'normalizer.remove_characters',
             ),
-        ));
+        );
+        $validated = new SensitiveTextConfig(
+            normalizer: $normalizerConfig,
+            redisPrefix: $this->stringValue($redisConfig['prefix'] ?? null, 'redis.prefix'),
+            dictionaryKey: $this->stringValue($dictionaryConfig['key'] ?? null, 'dictionary.key'),
+            versionKey: $this->stringValue($dictionaryConfig['version_key'] ?? null, 'dictionary.version_key'),
+            versionCheckInterval: $this->floatValue(
+                $config['version_check_interval'] ?? null,
+                'version_check_interval',
+            ),
+            maskCharacter: $this->stringValue($config['mask_character'] ?? null, 'mask_character'),
+            regexRules: $this->regexRules($config['regex_rules'] ?? null),
+            whitelistRules: $this->whitelistRules(
+                $this->arrayValue($config['whitelist'] ?? null, 'whitelist')['rules'] ?? null,
+            ),
+        );
+        $normalizer = new TextNormalizer($validated->normalizer);
         $manager = $app->make(RedisFactory::class);
         $connectionName = $this->stringValue($redisConfig['connection'] ?? null, 'redis.connection');
         $redis = LaravelRedisAdapter::lazy(static fn(): mixed => $manager->connection($connectionName));
@@ -90,20 +108,14 @@ final class SensitiveTextServiceProvider extends ServiceProvider
             $normalizer,
             new RedisDictionaryRepository(
                 $redis,
-                $this->stringValue($redisConfig['prefix'] ?? null, 'redis.prefix'),
-                $this->stringValue($dictionaryConfig['key'] ?? null, 'dictionary.key'),
-                $this->stringValue($dictionaryConfig['version_key'] ?? null, 'dictionary.version_key'),
+                $validated->redisPrefix,
+                $validated->dictionaryKey,
+                $validated->versionKey,
             ),
-            [new AhoCorasickMatcher(), new RegexMatcher($this->regexRules($config['regex_rules'] ?? null))],
-            whitelist: new WhitelistMatcher(
-                $normalizer,
-                $this->whitelistRules($this->arrayValue($config['whitelist'] ?? null, 'whitelist')['rules'] ?? null),
-            ),
-            versionCheckInterval: $this->floatValue(
-                $config['version_check_interval'] ?? null,
-                'version_check_interval',
-            ),
-            maskCharacter: $this->stringValue($config['mask_character'] ?? null, 'mask_character'),
+            [new AhoCorasickMatcher(), new RegexMatcher($validated->regexRules)],
+            whitelist: new WhitelistMatcher($normalizer, $validated->whitelistRules),
+            versionCheckInterval: $validated->versionCheckInterval,
+            maskCharacter: $validated->maskCharacter,
         );
     }
 
@@ -196,6 +208,11 @@ final class SensitiveTextServiceProvider extends ServiceProvider
                         'regex_rules.*.target',
                     )),
                     metadata: $metadata,
+                );
+            } catch (InvalidRuleException $exception) {
+                throw new InvalidConfigurationException(
+                    'Configuration [regex_rules] contains an invalid rule.',
+                    previous: $exception,
                 );
             } catch (\TypeError|\ValueError $exception) {
                 throw new InvalidConfigurationException('Configuration [regex_rules] contains an invalid enum value.', previous: $exception);

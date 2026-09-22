@@ -864,7 +864,7 @@ it('registers a lazy singleton independently of the static entry', function () {
 
 Run: `vendor/bin/pest tests/Integration/Laravel`；Expected: 缺 provider 失败。
 
-- [ ] **Step 3: 实现 provider/config/facade。** config 至少包含 redis.connection（default）、redis.prefix、dictionary.key/version_key、normalizer 七个字段、version_check_interval=5、mask_character='*'、regex_rules=[]、whitelist.rules=[]、reload.policy='keep_last_good'、batch.driver='sync'。不提供 redis.driver 配置；宿主连接必须由 Laravel phpredis driver 创建。拒绝不支持的 policy/batch driver，不假装已有不同策略。配置里的规则用纯数组和 enum 的标量值，由 provider 转为 DTO，保证 config:cache 可用。
+- [ ] **Step 3: 实现 provider/config/facade。** config 至少包含 redis.connection（default）、redis.prefix、dictionary.key/version_key、normalizer 七个字段、version_check_interval=5、mask_character='*'、regex_rules=[]、whitelist.rules=[]、reload.policy='keep_last_good'、batch.driver='sync'。不提供 redis.driver 或 redis.timeout 配置；宿主连接必须由 Laravel phpredis driver 创建，连接 timeout/read_timeout 由宿主 `config/database.php` 的 `database.redis` 连接配置管理，包不得修改共享连接。普通 PHP 的 `SensitiveTextConfig::redisTimeout` 保持不变。拒绝不支持的 policy/batch driver，不假装已有不同策略。配置里的规则用纯数组和 enum 的标量值，由 provider 转为 DTO，保证 config:cache 可用。
 
 ```php
 public function register(): void
