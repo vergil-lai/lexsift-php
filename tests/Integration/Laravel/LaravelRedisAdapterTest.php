@@ -101,7 +101,7 @@ it('sanitizes failures while validating a lazily resolved phpredis client', func
     $connection = new class (new Redis()) extends PhpRedisConnection {
         public function client()
         {
-            throw new UnexpectedValueException('redis://user:client-secret@example.test');
+            throw new InvalidConfigurationException('redis://user:lazy-client-secret@example.test');
         }
     };
     $adapter = LaravelRedisAdapter::lazy(static fn(): PhpRedisConnection => $connection);
@@ -111,12 +111,35 @@ it('sanitizes failures while validating a lazily resolved phpredis client', func
         PHPUnit\Framework\Assert::fail('Expected RedisUnavailableException was not thrown.');
     } catch (RedisUnavailableException $exception) {
         expect($exception->getMessage())->toBe('Redis GET failed.')
-            ->and((string) $exception)->not->toContain('client-secret')
+            ->and((string) $exception)->not->toContain('lazy-client-secret')
+            ->and($exception->getPrevious())->toBeInstanceOf(RuntimeException::class)
+            ->and($exception->getPrevious()?->getMessage())->toBe(
+                sprintf('Redis dependency raised %s.', InvalidConfigurationException::class),
+            )
+            ->and((string) $exception->getPrevious())->not->toContain('lazy-client-secret')
+            ->and($exception->getPrevious()?->getPrevious())->toBeNull();
+    }
+});
+
+it('sanitizes failures while validating a direct phpredis client', function () {
+    $connection = new class (new Redis()) extends PhpRedisConnection {
+        public function client()
+        {
+            throw new UnexpectedValueException('redis://user:direct-client-secret@example.test');
+        }
+    };
+
+    try {
+        new LaravelRedisAdapter($connection);
+        PHPUnit\Framework\Assert::fail('Expected RedisUnavailableException was not thrown.');
+    } catch (RedisUnavailableException $exception) {
+        expect($exception->getMessage())->toBe('Redis connection validation failed.')
+            ->and((string) $exception)->not->toContain('direct-client-secret')
             ->and($exception->getPrevious())->toBeInstanceOf(RuntimeException::class)
             ->and($exception->getPrevious()?->getMessage())->toBe(
                 'Redis dependency raised UnexpectedValueException.',
             )
-            ->and((string) $exception->getPrevious())->not->toContain('client-secret')
+            ->and((string) $exception->getPrevious())->not->toContain('direct-client-secret')
             ->and($exception->getPrevious()?->getPrevious())->toBeNull();
     }
 });

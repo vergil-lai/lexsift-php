@@ -47,7 +47,7 @@ LUA;
     public function __construct(mixed $connection)
     {
         if ($connection instanceof PhpRedisConnection) {
-            $this->connection = $this->validateConnection($connection);
+            $this->connection = $this->validateConnection($connection, 'connection validation');
 
             return;
         }
@@ -141,13 +141,7 @@ LUA;
             throw $this->unavailableException($operation, $exception);
         }
 
-        try {
-            return $this->connection = $this->validateConnection($connection);
-        } catch (InvalidConfigurationException $exception) {
-            throw $exception;
-        } catch (\Throwable $exception) {
-            throw $this->unavailableException($operation, $exception);
-        }
+        return $this->connection = $this->validateConnection($connection, $operation);
     }
 
     /** @param callable(PhpRedisConnection): mixed $command */
@@ -193,12 +187,19 @@ LUA;
         return $value;
     }
 
-    private function validateConnection(mixed $connection): PhpRedisConnection
+    private function validateConnection(mixed $connection, string $operation): PhpRedisConnection
     {
         if (!$connection instanceof PhpRedisConnection || $connection instanceof PhpRedisClusterConnection) {
             throw new InvalidConfigurationException('Laravel Redis connection must use the phpredis driver.');
         }
-        $this->phpRedisClient($connection);
+        try {
+            $client = $connection->client();
+        } catch (\Throwable $exception) {
+            throw $this->unavailableException($operation, $exception);
+        }
+        if (!$client instanceof Redis) {
+            throw new InvalidConfigurationException('Laravel Redis connection must wrap a phpredis Redis client.');
+        }
 
         return $connection;
     }
