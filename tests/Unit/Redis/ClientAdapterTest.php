@@ -67,8 +67,8 @@ it('encodes a null expected version and returns null on compare-and-swap conflic
     ))->toBeNull()
         ->and($client->evalCalls[0]['args'])->toBe(['version', 'dictionary', '', 'payload']);
 })->with([
-    'false' => false,
-    'null' => null,
+    'false' => [false],
+    'null' => [null],
 ]);
 
 it('wraps phpredis exceptions and preserves the cause', function () {
@@ -224,10 +224,10 @@ it('rejects invalid redis timeouts', function (float $timeout) {
     expect(fn() => PhpRedisClientAdapter::fromUrl('tcp://localhost', $timeout))
         ->toThrow(InvalidConfigurationException::class);
 })->with([
-    'zero' => 0.0,
-    'negative' => -1.0,
-    'infinite' => INF,
-    'not a number' => NAN,
+    'zero' => [0.0],
+    'negative' => [-1.0],
+    'infinite' => [INF],
+    'not a number' => [NAN],
 ]);
 
 it('does not expose redis credentials when connection setup fails', function () {

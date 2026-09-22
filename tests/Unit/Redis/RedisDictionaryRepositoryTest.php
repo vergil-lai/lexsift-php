@@ -214,8 +214,8 @@ it('validates an existing empty version after Lua-equivalent CAS comparison', fu
         ->and($redis->readSnapshot('sensitive_text:dictionary:version', 'sensitive_text:dictionary'))
         ->toBe(['', $originalPayload]);
 })->with([
-    'null expected version' => null,
-    'empty expected version' => '',
+    'null expected version' => [null],
+    'empty expected version' => [''],
 ]);
 
 it('propagates injected redis failures', function () {

@@ -11,4 +11,5 @@ return (new PhpCsFixer\Config())->setRiskyAllowed(true)->setRules([
     'no_unused_imports' => true,
     'single_quote' => true,
     'array_syntax' => ['syntax' => 'short'],
+    'new_with_parentheses' => ['anonymous_class' => false],
 ])->setFinder($finder);

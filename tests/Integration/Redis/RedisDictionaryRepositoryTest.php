@@ -32,9 +32,11 @@ $deleteKeys = static function (Redis $client, string $prefix): void {
     $client->del([$prefix . 'dictionary', $prefix . 'dictionary:version']);
 };
 
-it('round trips one atomic snapshot with a custom prefix', function () use ($connect, $deleteKeys) {
+$randomHex = static fn(int $length): string => bin2hex((new Random\Randomizer())->getBytes($length));
+
+it('round trips one atomic snapshot with a custom prefix', function () use ($connect, $deleteKeys, $randomHex) {
     $client = $connect();
-    $prefix = 'sensitive_text:test:' . bin2hex(random_bytes(8)) . ':';
+    $prefix = 'sensitive_text:test:' . $randomHex(8) . ':';
 
     try {
         $adapter = new PhpRedisClientAdapter($client);
@@ -57,9 +59,9 @@ it('round trips one atomic snapshot with a custom prefix', function () use ($con
     }
 })->skip($redisIntegrationDisabled, 'Set SENSITIVE_TEXT_REDIS_TESTS=1 for Redis integration');
 
-it('distinguishes a missing snapshot from a valid empty dictionary', function () use ($connect, $deleteKeys) {
+it('distinguishes a missing snapshot from a valid empty dictionary', function () use ($connect, $deleteKeys, $randomHex) {
     $client = $connect();
-    $prefix = 'sensitive_text:test:' . bin2hex(random_bytes(8)) . ':';
+    $prefix = 'sensitive_text:test:' . $randomHex(8) . ':';
     $repository = new RedisDictionaryRepository(new PhpRedisClientAdapter($client), $prefix);
 
     try {
@@ -72,10 +74,10 @@ it('distinguishes a missing snapshot from a valid empty dictionary', function ()
     }
 })->skip($redisIntegrationDisabled, 'Set SENSITIVE_TEXT_REDIS_TESTS=1 for Redis integration');
 
-it('rejects a stale publish from a second client without changing the snapshot', function () use ($connect, $deleteKeys) {
+it('rejects a stale publish from a second client without changing the snapshot', function () use ($connect, $deleteKeys, $randomHex) {
     $firstClient = $connect();
     $secondClient = $connect();
-    $prefix = 'sensitive_text:test:' . bin2hex(random_bytes(8)) . ':';
+    $prefix = 'sensitive_text:test:' . $randomHex(8) . ':';
     $first = new RedisDictionaryRepository(new PhpRedisClientAdapter($firstClient), $prefix);
     $second = new RedisDictionaryRepository(new PhpRedisClientAdapter($secondClient), $prefix);
 
@@ -114,12 +116,12 @@ it('wraps a command on a disconnected socket', function () use ($connect) {
     }
 })->skip($redisIntegrationDisabled, 'Set SENSITIVE_TEXT_REDIS_TESTS=1 for Redis integration');
 
-it('wraps a real Redis ACL error when scripts are disabled', function () use ($connect, $deleteKeys) {
+it('wraps a real Redis ACL error when scripts are disabled', function () use ($connect, $deleteKeys, $randomHex) {
     $admin = $connect();
     $restricted = null;
-    $prefix = 'sensitive_text:test:' . bin2hex(random_bytes(8)) . ':';
-    $username = 'sensitive_text_test_' . bin2hex(random_bytes(8));
-    $password = bin2hex(random_bytes(16));
+    $prefix = 'sensitive_text:test:' . $randomHex(8) . ':';
+    $username = 'sensitive_text_test_' . $randomHex(8);
+    $password = $randomHex(16);
 
     try {
         expect($admin->rawCommand(

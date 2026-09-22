@@ -1,0 +1,125 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: PHP ${{ matrix.php }} / Pest ${{ matrix.pest }} / Testbench ${{ matrix.testbench }}${{ matrix.label }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - php: '8.2'
+            pest: '^3.0'
+            testbench: '^10.0'
+            update-flags: ''
+            label: ''
+          - php: '8.3'
+            pest: '^4.0'
+            testbench: '^11.0'
+            update-flags: ''
+            label: ''
+          - php: '8.4'
+            pest: '^4.0'
+            testbench: '^11.0'
+            update-flags: ''
+            label: ''
+          - php: '8.5'
+            pest: '^4.0'
+            testbench: '^11.0'
+            update-flags: ''
+            label: ''
+          - php: '8.2'
+            pest: '^3.0'
+            testbench: '^10.0'
+            update-flags: '--prefer-lowest --prefer-stable'
+            label: ' / lowest'
+    services:
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        with:
+          php-version: '${{ matrix.php }}'
+          extensions: intl, mbstring, redis
+          coverage: none
+          tools: composer:v2
+      - name: Select dependency lane
+        run: composer require --dev --no-update "pestphp/pest:${{ matrix.pest }}" "orchestra/testbench:${{ matrix.testbench }}"
+      - name: Install dependencies
+        run: composer update --prefer-dist --no-interaction ${{ matrix.update-flags }}
+      - run: composer validate --strict
+      - run: composer check-platform-reqs
+      - run: composer check
+        env:
+          SENSITIVE_TEXT_REDIS_TESTS: '1'
+
+  coverage:
+    name: Coverage (PHP 8.5)
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        with:
+          php-version: '8.5'
+          extensions: intl, mbstring, redis
+          coverage: pcov
+          tools: composer:v2
+      - run: composer update --prefer-dist --no-interaction
+      - run: composer validate --strict
+      - run: composer check-platform-reqs
+      - run: composer test:coverage
+        env:
+          SENSITIVE_TEXT_REDIS_TESTS: '1'
+
+  release-smoke:
+    name: Release archive smoke
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        with:
+          php-version: '8.5'
+          extensions: intl, mbstring, redis
+          coverage: none
+          tools: composer:v2
+      - run: composer update --prefer-dist --no-interaction
+      - run: composer validate --strict
+      - run: composer check-platform-reqs
+      - run: composer test:release
+        env:
+          SENSITIVE_TEXT_REDIS_TESTS: '1'

@@ -1,6 +1,14 @@
 {
     "name": "vergil-lai/sensitive-text",
     "description": "A Unicode-aware sensitive text detection package for PHP",
+    "keywords": [
+        "aho-corasick",
+        "laravel",
+        "phpredis",
+        "redis",
+        "sensitive-text",
+        "unicode"
+    ],
     "type": "library",
     "license": "MIT",
     "require": {
@@ -13,7 +21,7 @@
         "friendsofphp/php-cs-fixer": "^3.0",
         "orchestra/testbench": "^10.0 || ^11.0",
         "pestphp/pest": "^3.0 || ^4.0",
-        "phpstan/phpstan": "^2.0"
+        "phpstan/phpstan": "^2.2.14"
     },
     "suggest": {
         "illuminate/redis": "Required for Laravel Redis integration (^12.0 || ^13.0).",
@@ -44,6 +52,7 @@
     "scripts": {
         "test": "pest",
         "test:coverage": "pest --coverage --min=85",
+        "test:release": "bash tests/Release/package-smoke.sh",
         "stan": "phpstan analyse --memory-limit=1G",
         "cs": "php-cs-fixer fix --dry-run --diff",
         "cs:fix": "php-cs-fixer fix",
