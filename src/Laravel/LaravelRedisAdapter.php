@@ -126,31 +126,35 @@ LUA;
         return $raw;
     }
 
-    private function resolveConnection(): PhpRedisConnection
+    private function resolveConnection(string $operation): PhpRedisConnection
     {
         if (null !== $this->connection) {
             return $this->connection;
         }
 
-        $connection = ($this->resolver ?? throw new InvalidConfigurationException(
+        $resolver = $this->resolver ?? throw new InvalidConfigurationException(
             'Laravel Redis connection resolver is missing.',
-        ))();
+        );
+        try {
+            $connection = $resolver();
+        } catch (\Throwable $exception) {
+            throw $this->unavailableException($operation, $exception);
+        }
+
         return $this->connection = $this->validateConnection($connection);
     }
 
     /** @param callable(PhpRedisConnection): mixed $command */
     private function execute(string $operation, callable $command): mixed
     {
-        $connection = $this->resolveConnection();
-        $client = $this->phpRedisClient($connection);
+        $connection = $this->resolveConnection($operation);
         try {
+            $client = $this->phpRedisClient($connection);
             $client->clearLastError();
             $result = $command($connection);
             $error = $this->phpRedisClient($connection)->getLastError();
-        } catch (InvalidConfigurationException $exception) {
-            throw $exception;
         } catch (\Throwable $exception) {
-            throw new RedisUnavailableException("Redis {$operation} failed.", previous: $exception);
+            throw $this->unavailableException($operation, $exception);
         }
 
         if (null !== $error) {
@@ -161,6 +165,14 @@ LUA;
         }
 
         return $result;
+    }
+
+    private function unavailableException(string $operation, \Throwable $exception): RedisUnavailableException
+    {
+        return new RedisUnavailableException(
+            "Redis {$operation} failed.",
+            previous: new \RuntimeException(sprintf('Redis dependency raised %s.', $exception::class)),
+        );
     }
 
     private function nullableString(mixed $value, string $operation): ?string

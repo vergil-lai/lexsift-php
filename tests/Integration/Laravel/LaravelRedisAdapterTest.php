@@ -77,15 +77,39 @@ it('rejects direct and lazily resolved non-phpredis connections', function () {
     }
 });
 
-it('wraps Laravel Redis command failures without exposing their message', function () {
-    $connection = new StubLaravelRedisConnection([new RuntimeException('secret endpoint')]);
+it('sanitizes lazy resolver failures and their exception chain', function () {
+    $adapter = LaravelRedisAdapter::lazy(static function (): never {
+        throw new UnexpectedValueException('redis://user:resolver-secret@example.test');
+    });
+
+    try {
+        $adapter->get('key');
+        PHPUnit\Framework\Assert::fail('Expected RedisUnavailableException was not thrown.');
+    } catch (RedisUnavailableException $exception) {
+        expect($exception->getMessage())->toBe('Redis GET failed.')
+            ->and((string) $exception)->not->toContain('resolver-secret')
+            ->and($exception->getPrevious())->toBeInstanceOf(RuntimeException::class)
+            ->and($exception->getPrevious()?->getMessage())->toBe(
+                'Redis dependency raised UnexpectedValueException.',
+            )
+            ->and((string) $exception->getPrevious())->not->toContain('resolver-secret')
+            ->and($exception->getPrevious()?->getPrevious())->toBeNull();
+    }
+});
+
+it('sanitizes Laravel Redis command failures and their exception chain', function () {
+    $connection = new StubLaravelRedisConnection([new LogicException('redis://user:command-secret@example.test')]);
 
     try {
         (new LaravelRedisAdapter($connection))->get('key');
         PHPUnit\Framework\Assert::fail('Expected RedisUnavailableException was not thrown.');
     } catch (RedisUnavailableException $exception) {
         expect($exception->getMessage())->toBe('Redis GET failed.')
-            ->and($exception->getPrevious())->toBeInstanceOf(RuntimeException::class);
+            ->and((string) $exception)->not->toContain('command-secret')
+            ->and($exception->getPrevious())->toBeInstanceOf(RuntimeException::class)
+            ->and($exception->getPrevious()?->getMessage())->toBe('Redis dependency raised LogicException.')
+            ->and((string) $exception->getPrevious())->not->toContain('command-secret')
+            ->and($exception->getPrevious()?->getPrevious())->toBeNull();
     }
 });
 
