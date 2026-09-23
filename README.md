@@ -59,14 +59,14 @@ var_dump($filter->contains('新的词语'));
 
 ## API 与输入约定
 
-| 方法 | 行为 |
-| --- | --- |
-| `__construct(array $terms, array $whitelist = [], array $options = [])` | 构建独立实例；未指定的选项使用默认值 |
-| `contains(string $text): bool` | 找到首个未被白名单排除的匹配即停止匹配迭代 |
-| `scan(string $text): array` | 返回所有有效重叠匹配 |
-| `mask(string $text, string $replacement = '*'): string` | 合并有效原文范围后替换 |
-| `replaceTerms(array $terms): void` | 完整替换当前实例词库 |
-| `replaceWhitelist(array $whitelist): void` | 完整替换当前实例白名单 |
+| 方法                                                                    | 行为                                       |
+| ----------------------------------------------------------------------- | ------------------------------------------ |
+| `__construct(array $terms, array $whitelist = [], array $options = [])` | 构建独立实例；未指定的选项使用默认值       |
+| `contains(string $text): bool`                                          | 找到首个未被白名单排除的匹配即停止匹配迭代 |
+| `scan(string $text): array`                                             | 返回所有有效重叠匹配                       |
+| `mask(string $text, string $replacement = '*'): string`                 | 合并有效原文范围后替换                     |
+| `replaceTerms(array $terms): void`                                      | 完整替换当前实例词库                       |
+| `replaceWhitelist(array $whitelist): void`                              | 完整替换当前实例白名单                     |
 
 词库与白名单只接受字符串值，数组键不参与匹配，顺序采用 PHP 数组遍历顺序。空数组合法；空字符串及经过文本处理后为空的词抛出 `ValueError`。原始重复词和处理后相同的词均保留首次出现者，包括返回的原始 `term`。替换操作成功后立即生效，失败时保留旧状态，不影响其他实例。
 
@@ -76,14 +76,14 @@ var_dump($filter->contains('新的词语'));
 
 仅接受以下六个布尔选项；可只传其中部分，`0`、`1` 或字符串不代替布尔值。
 
-| 选项 | 默认值 | 行为 |
-| --- | --- | --- |
-| `unicode_nfkc` | `true` | 统一字符形式（Unicode NFKC），包括全角转换、字符展开与组合 |
-| `lowercase` | `true` | Unicode 逐码点小写转换 |
-| `remove_whitespace` | `true` | 删除 Unicode 空白 |
-| `remove_punctuation` | `false` | 删除 Unicode 标点 |
-| `remove_symbols` | `false` | 删除 Unicode 符号 |
-| `remove_emoji` | `true` | 按原始 grapheme 整簇删除 emoji |
+| 选项                 | 默认值  | 行为                                                       |
+| -------------------- | ------- | ---------------------------------------------------------- |
+| `unicode_nfkc`       | `true`  | 统一字符形式（Unicode NFKC），包括全角转换、字符展开与组合 |
+| `lowercase`          | `true`  | Unicode 逐码点小写转换                                     |
+| `remove_whitespace`  | `true`  | 删除 Unicode 空白                                          |
+| `remove_punctuation` | `false` | 删除 Unicode 标点                                          |
+| `remove_symbols`     | `false` | 删除 Unicode 符号                                          |
+| `remove_emoji`       | `true`  | 按原始 grapheme 整簇删除 emoji                             |
 
 词库、白名单和正文始终使用同一套文本处理规则。这些处理只用于匹配，返回的原词、命中文本和未命中的原文不会被改写。
 
@@ -127,6 +127,35 @@ php examples/batch-scan.php
 ## PHP 扩展版本
 
 本项目也提供 [LexSift PHP 扩展版本](https://github.com/vergil-lai/lexsift)，使用 Rust 实现匹配引擎。两个版本采用一致的方法、参数和返回值约定；扩展版本使用 `LexSift\Matcher`，本库使用 `VergilLai\LexSift\Matcher`。不同运行环境的 Unicode 数据版本可能导致个别字符的处理结果存在差异。
+
+## 性能对比
+
+同一台 macOS arm64 机器上实测，PHP 8.5.4；LexSift 扩展使用 [V0.1.0](https://github.com/vergil-lai/lexsift/releases/tag/v0.1.0)，LexSift PHP 使用 [V0.1.0](https://github.com/vergil-lai/lexsift-php/releases/tag/v0.1.0)。通过 `php -n` 隔离系统配置并显式加载扩展，关闭 CLI OPcache 和 JIT。两个实现使用相同的 10,000 词词库、默认文本处理选项；除标明白名单的场景外，均无白名单。
+
+每场景预热 5 次，查询取 7 组均值的中位数，构建取 5 组中位数。查询每组按约 20 ms 自动选择 10–2,000 次迭代，构建每组 1 次；查询耗时不含构建，构建耗时包含对象生命周期。按“扩展 → PHP → PHP → 扩展”串行运行两轮，下表取两轮中位数的平均值，单位为 **毫秒/次**。加速比为 PHP 耗时除以扩展耗时。
+
+| 场景                                     | LexSift 扩展 | LexSift PHP | 扩展加速比 |
+| ---------------------------------------- | -----------: | ----------: | ---------: |
+| 构建 10,000 词实例                       |      28.0201 |    132.3320 |     4.7 倍 |
+| `scan()`：100 中文字，无命中             |       0.0093 |      0.2632 |    28.3 倍 |
+| `scan()`：10,000 中文字，无命中          |       0.7120 |     17.3654 |    24.4 倍 |
+| `scan()`：10,000 ASCII 字符，无命中      |       0.4309 |      2.6258 |     6.1 倍 |
+| `scan()`：1,000 次命中                   |       0.6440 |     15.4235 |    23.9 倍 |
+| `contains()`：长中文首部命中             |       0.0251 |     11.3638 |   453.4 倍 |
+| `contains()`：长中文中部命中             |       0.3656 |     14.0836 |    38.5 倍 |
+| `contains()`：长中文尾部命中             |       0.7118 |     16.8322 |    23.6 倍 |
+| `contains()`：长中文无命中               |       0.7139 |     16.7897 |    23.5 倍 |
+| `contains()`：长 ASCII 无命中            |       0.3768 |      2.3365 |     6.2 倍 |
+| `contains()`：有白名单，首部有效命中     |       0.7133 |     17.2344 |    24.2 倍 |
+| `contains()`：有白名单，唯一命中被豁免   |       0.7276 |     17.7609 |    24.4 倍 |
+| `contains()`：白名单豁免后，尾部有效命中 |       0.7131 |     17.7839 |    24.9 倍 |
+| `mask()`：1,000 个分隔的命中             |       0.6265 |     17.3728 |    27.7 倍 |
+
+词库为 `敏感词00000` 至 `敏感词09999`，命中词为最后一项；中文填充字符为“文”，ASCII 为 `x`。长文本使用 10,000 个填充字符，首部、中部、尾部场景额外插入命中词。`scan()` 密集命中输入为命中词重复 1,000 次（8,000 码点、14,000 字节），`mask()` 场景在每个命中后加入“文”。白名单为 `敏感词09999safe`，用于对照有效命中、完全豁免和豁免后再次命中。
+
+**约 453 倍仅对应长中文首部命中，不能代表整体性能。** 测试版本中，扩展在无白名单时可以流式处理并提前结束匹配；PHP 的非 ASCII 路径则先收集全文字符并完成 Unicode 组合，之后才开始匹配。两边实际处理的工作量不同。有白名单时，两边均需全文归一化；本次全文扫描的差距约为 6–28 倍。另一次长度对照中，首部命中后追加 100、1,000、10,000、30,000 个中文字，差距分别约为 19、137、472、586 倍，也说明该比值随文本长度变化。
+
+本次对性能场景及全角、零宽字符、组合字符、白名单输入进行的 57 项 `contains()`、`scan()`、`mask()` 返回值对照均一致。两边均返回字节偏移，并对每个合并命中范围替换一次，因此表中的扫描和替换采用相同语义。这是固定合成输入的本机测试，未覆盖生产语料、内存、并发吞吐或开启 JIT 后的表现，不代表所有 Unicode 输入等价，也不是业务请求整体加速承诺。
 
 ## 协议
 
