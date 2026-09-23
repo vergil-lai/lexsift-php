@@ -1,0 +1,29 @@
+<?php
+
+declare(strict_types=1);
+
+namespace LexSift;
+
+// 仅供 PHPStan 扫描；不加载到运行时，避免把类型声明误当作已安装的扩展。
+class Matcher
+{
+    /**
+     * @param array<array-key, string> $terms
+     * @param array<array-key, string> $whitelist
+     * @param array<string, bool> $options
+     */
+    public function __construct(array $terms, array $whitelist = [], array $options = []) {}
+
+    public function contains(string $text): bool {}
+
+    /** @return list<array{term: string, text: string, start: int, end: int}> */
+    public function scan(string $text): array {}
+
+    public function mask(string $text, string $replacement = '*'): string {}
+
+    /** @param array<array-key, string> $terms */
+    public function replaceTerms(array $terms): void {}
+
+    /** @param array<array-key, string> $whitelist */
+    public function replaceWhitelist(array $whitelist): void {}
+}

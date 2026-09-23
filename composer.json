@@ -1,6 +1,6 @@
 {
   "name": "vergil-lai/lexsift-php",
-  "description": "Pure PHP implementation of the LexSift Unicode-aware text matcher",
+  "description": "PHP library for keyword and phrase matching using Aho–Corasick.",
   "keywords": [
     "keyword-matching",
     "phrase-matching",
@@ -8,15 +8,20 @@
     "aho-corasick",
     "sensitive-filter"
   ],
+  "homepage": "https://github.com/vergil-lai/lexsift-php",
   "type": "library",
   "license": "MIT",
+  "support": {
+    "issues": "https://github.com/vergil-lai/lexsift-php/issues",
+    "source": "https://github.com/vergil-lai/lexsift-php"
+  },
   "require": {
     "php": ">=8.2",
     "ext-intl": "*",
     "ext-mbstring": "*"
   },
   "require-dev": {
-    "friendsofphp/php-cs-fixer": "^3.0",
+    "friendsofphp/php-cs-fixer": "^3.95.26",
     "pestphp/pest": "^3.0 || ^4.0",
     "phpstan/phpstan": "^2.2.14"
   },

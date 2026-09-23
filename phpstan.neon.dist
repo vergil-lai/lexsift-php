@@ -5,3 +5,5 @@ parameters:
         - tests
         - benchmarks
     tmpDir: .phpstan-cache
+    scanFiles:
+        - tests/Support/lexsift.php.stub

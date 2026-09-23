@@ -24,7 +24,6 @@ test('matches the installed extension across all normalization options', functio
         'ﾡￂ', 'ﾡ👨‍👩‍👧‍👦ￂ', 'ＡＢＣ abc', 'İΟΣ', "a\0b", '赌1️⃣🇨🇳👍🏽博',
         "a\u{0301}😀\u{0327}b", 'ab-cd abc', "à\u{0315}", '赌$博 微信',
     ];
-    $extensionClass = 'LexSift\\Matcher';
     for ($bits = 0; $bits < 64; ++$bits) {
         $options = [];
         foreach ($keys as $bit => $key) {
@@ -32,7 +31,7 @@ test('matches the installed extension across all normalization options', functio
         }
         foreach ([[], ['f', '微信支付', 'ab']] as $whitelist) {
             $php = new Matcher($terms, $whitelist, $options);
-            $extension = new $extensionClass($terms, $whitelist, $options);
+            $extension = new \LexSift\Matcher($terms, $whitelist, $options);
             foreach ($texts as $text) {
                 expect($php->scan($text))->toBe($extension->scan($text))
                     ->and($php->contains($text))->toBe($extension->contains($text))
