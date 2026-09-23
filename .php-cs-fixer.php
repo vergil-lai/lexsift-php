@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-$finder = PhpCsFixer\Finder::create()->in([__DIR__.'/src', __DIR__.'/tests', __DIR__.'/config', __DIR__.'/benchmarks']);
+$finder = PhpCsFixer\Finder::create()->in([__DIR__.'/src', __DIR__.'/tests', __DIR__.'/examples', __DIR__.'/benchmarks']);
 
 return (new PhpCsFixer\Config())->setRiskyAllowed(true)->setRules([
     '@PER-CS' => true,

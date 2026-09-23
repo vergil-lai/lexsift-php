@@ -2,16 +2,13 @@
 
 declare(strict_types=1);
 
-use VergilLai\SensitiveText\Exception\NormalizationException;
-use VergilLai\SensitiveText\Normalizer\NormalizerConfig;
-use VergilLai\SensitiveText\Normalizer\SourceSpan;
-use VergilLai\SensitiveText\Normalizer\TextNormalizer;
+use VergilLai\LexSift\Normalizer\TextNormalizer;
 
 it('keeps original intervals through expansion and deletion', function () {
     $normalized = (new TextNormalizer())->normalize('请加我微❤️信联系');
     $span = $normalized->span(3, 5);
 
-    expect([$span->start, $span->end])->toBe([3, 7])
+    expect($span)->toBe([3, 7])
         ->and($normalized->sliceOriginal($span))->toBe('微❤️信');
 
     $normalized = (new TextNormalizer())->normalize('ﬃ');
@@ -20,7 +17,7 @@ it('keeps original intervals through expansion and deletion', function () {
 });
 
 it('does not absorb removed edges', function () {
-    $normalized = (new TextNormalizer(NormalizerConfig::aggressive()))
+    $normalized = (new TextNormalizer(['remove_punctuation' => true, 'remove_symbols' => true]))
         ->normalize(' ❤️微---信❤️ ');
 
     expect($normalized->sliceOriginal($normalized->span(0, 2)))->toBe('微---信');
@@ -31,8 +28,9 @@ it('maps every expanded character to its source cluster', function () {
 
     expect($normalized->normalized)->toBe("ffii\u{0307}")
         ->and(array_map(
-            static fn(SourceSpan $span): array => [$span->start, $span->end],
-            $normalized->offsetMap,
+            static fn(int $start, int $end): array => [$start, $end],
+            $normalized->sourceStarts,
+            $normalized->sourceEnds,
         ))->toBe([
             [0, 1],
             [0, 1],
@@ -56,14 +54,15 @@ it('looks up a narrow original range without scanning the full normalized text',
         $characters = array_fill(0, $size, 'a');
         $offsetMap = [];
         for ($index = 0; $index < $size; ++$index) {
-            $offsetMap[] = new SourceSpan($index, $index + 1);
+            $offsetMap[] = [$index, $index + 1];
         }
 
-        $normalized = new \VergilLai\SensitiveText\Normalizer\NormalizedText(
+        $normalized = new \VergilLai\LexSift\Normalizer\NormalizedText(
             str_repeat('a', $size),
             str_repeat('a', $size),
             $characters,
-            $offsetMap,
+            array_map(static fn(array $span): int => $span[0], $offsetMap),
+            array_map(static fn(array $span): int => $span[1], $offsetMap),
             range(0, $size),
         );
         expect($normalized->normalizedRangeForOriginal($size - 1, $size))->toBe('a');
@@ -83,16 +82,17 @@ it('looks up a narrow original range without scanning the full normalized text',
 });
 
 it('maps every unnormalized code point to its complete source cluster', function () {
-    $normalized = (new TextNormalizer(new NormalizerConfig(
-        unicodeNfkc: false,
-        lowercase: false,
-        removeWhitespace: false,
-        removeEmoji: false,
-    )))->normalize("a\u{0315}");
+    $normalized = (new TextNormalizer([
+        'unicode_nfkc' => false,
+        'lowercase' => false,
+        'remove_whitespace' => false,
+        'remove_emoji' => false,
+    ]))->normalize("a\u{0315}");
 
     expect(array_map(
-        static fn(SourceSpan $span): array => [$span->start, $span->end],
-        $normalized->offsetMap,
+        static fn(int $start, int $end): array => [$start, $end],
+        $normalized->sourceStarts,
+        $normalized->sourceEnds,
     ))->toBe([
         [0, 2],
         [0, 2],
@@ -108,11 +108,11 @@ it('stores byte offsets for original code point boundaries', function () {
 it('rejects invalid normalized and original intervals', function () {
     $normalized = (new TextNormalizer())->normalize('文本');
 
-    expect(fn() => $normalized->span(0, 0))->toThrow(NormalizationException::class)
-        ->and(fn() => $normalized->span(-1, 1))->toThrow(NormalizationException::class)
-        ->and(fn() => $normalized->span(0, 3))->toThrow(NormalizationException::class)
-        ->and(fn() => $normalized->sliceOriginal(new SourceSpan(0, 3)))
-        ->toThrow(NormalizationException::class)
+    expect(fn() => $normalized->span(0, 0))->toThrow(\ValueError::class)
+        ->and(fn() => $normalized->span(-1, 1))->toThrow(\ValueError::class)
+        ->and(fn() => $normalized->span(0, 3))->toThrow(\ValueError::class)
+        ->and(fn() => $normalized->sliceOriginal([0, 3]))
+        ->toThrow(\ValueError::class)
         ->and(fn() => $normalized->normalizedRangeForOriginal(1, 1))
-        ->toThrow(NormalizationException::class);
+        ->toThrow(\ValueError::class);
 });

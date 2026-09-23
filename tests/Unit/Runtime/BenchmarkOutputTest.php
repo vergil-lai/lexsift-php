@@ -2,11 +2,7 @@
 
 declare(strict_types=1);
 
-use VergilLai\SensitiveText\Contracts\DictionaryRepositoryInterface;
-use VergilLai\SensitiveText\Dictionary\DictionaryCompiler;
-use VergilLai\SensitiveText\Dictionary\SensitiveDictionary;
-use VergilLai\SensitiveText\Dictionary\SensitiveTerm;
-use VergilLai\SensitiveText\Normalizer\TextNormalizer;
+use VergilLai\LexSift\Matcher;
 
 require_once dirname(__DIR__, 3) . '/benchmarks/worker.php';
 
@@ -48,15 +44,17 @@ it('emits a finite smoke benchmark result for every scan shape', function () {
         'compileMs',
         'nodes',
         'rawTermsBytes',
-        'compiledBytes',
+        'compiledDeltaBytes',
         'bytesPerNode',
         'bytesPerTerm',
         'warmScanP50Ms',
         'warmScanP95Ms',
         'coldScanMs',
         'matchesPerSecond',
-        'reloadMs',
-        'peakMemoryBytes',
+        'constructionMs',
+        'denseContainsP50Ms',
+        'denseContainsP95Ms',
+        'processPeakBytes',
     ];
 
     $php = $result['php'] ?? null;
@@ -85,39 +83,24 @@ it('emits a finite smoke benchmark result for every scan shape', function () {
     }
 });
 
-it('defines finite per-node memory for a compiled dictionary', function () {
-    $terms = array_map(static fn(int $index): SensitiveTerm => new SensitiveTerm('term' . $index), range(1, 1000));
-    $dictionary = (new DictionaryCompiler(new TextNormalizer()))
-        ->compile(new SensitiveDictionary('1', $terms));
+it('compares ascii fast and fallback paths using the same normalization core', function () {
+    $result = benchmarkAsciiComparison(100, 3);
 
-    expect(count($dictionary->transitions))->toBeGreaterThan(0)
-        ->and(is_finite($dictionary->estimatedMemoryBytes / count($dictionary->transitions)))->toBeTrue();
+    expect($result['textCodepoints'])->toBe(100)
+        ->and($result['iterations'])->toBe(3)
+        ->and($result['fastNormalizeStringP50Ms'])->toBeGreaterThanOrEqual(0.0)
+        ->and($result['fallbackNormalizeStringP50Ms'])->toBeGreaterThanOrEqual(0.0)
+        ->and($result['fastContainsNoMatchP50Ms'])->toBeGreaterThanOrEqual(0.0)
+        ->and($result['fallbackContainsNoMatchP50Ms'])->toBeGreaterThanOrEqual(0.0)
+        ->and($result['fastContainsEarlyMatchP50Ms'])->toBeGreaterThanOrEqual(0.0)
+        ->and($result['fallbackContainsEarlyMatchP50Ms'])->toBeGreaterThanOrEqual(0.0);
 });
 
-it('starts a redis cold scan with the scanners first snapshot load', function () {
-    $repository = new class (new SensitiveDictionary('redis-v1', [new SensitiveTerm('敏感词')])) implements DictionaryRepositoryInterface {
-        public int $loadCalls = 0;
+it('measures cold scanning and immutable filter construction', function () {
+    $scanner = new Matcher(['敏感词']);
 
-        public function __construct(private readonly SensitiveDictionary $snapshot) {}
+    $result = benchmarkConstruction($scanner, ['替换词'], '这是敏感词');
 
-        public function version(): string
-        {
-            return $this->snapshot->version;
-        }
-
-        public function load(): SensitiveDictionary
-        {
-            ++$this->loadCalls;
-
-            return $this->snapshot;
-        }
-    };
-
-    $result = benchmarkRedisRepository($repository, '这是敏感词');
-
-    expect($repository->loadCalls)->toBe(2)
-        ->and($result['dictionaryVersion'])->toBe('redis-v1')
-        ->and($result['terms'])->toBe(1)
-        ->and($result['coldScanMs'])->toBeGreaterThanOrEqual(0.0)
-        ->and($result['reloadMs'])->toBeGreaterThanOrEqual(0.0);
+    expect($result['coldScanMs'])->toBeGreaterThanOrEqual(0.0)
+        ->and($result['constructionMs'])->toBeGreaterThanOrEqual(0.0);
 });

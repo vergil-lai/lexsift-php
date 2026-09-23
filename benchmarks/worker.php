@@ -2,33 +2,12 @@
 
 declare(strict_types=1);
 
-use VergilLai\SensitiveText\Contracts\DictionaryRepositoryInterface;
-use VergilLai\SensitiveText\Dictionary\DictionaryCompiler;
-use VergilLai\SensitiveText\Dictionary\RedisDictionaryRepository;
-use VergilLai\SensitiveText\Dictionary\SensitiveDictionary;
-use VergilLai\SensitiveText\Dictionary\SensitiveTerm;
-use VergilLai\SensitiveText\Matcher\AhoCorasickMatcher;
-use VergilLai\SensitiveText\Normalizer\TextNormalizer;
-use VergilLai\SensitiveText\Redis\PhpRedisClientAdapter;
-use VergilLai\SensitiveText\SensitiveText;
+use VergilLai\LexSift\Dictionary\DictionaryCompiler;
+use VergilLai\LexSift\Matcher;
+use VergilLai\LexSift\Matcher\AhoCorasickMatcher;
+use VergilLai\LexSift\Normalizer\TextNormalizer;
 
 require dirname(__DIR__) . '/vendor/autoload.php';
-
-/** @internal Benchmark-only fixed snapshot repository. */
-final readonly class BenchmarkDictionaryRepository implements DictionaryRepositoryInterface
-{
-    public function __construct(private SensitiveDictionary $snapshot) {}
-
-    public function version(): string
-    {
-        return $this->snapshot->version;
-    }
-
-    public function load(): SensitiveDictionary
-    {
-        return $this->snapshot;
-    }
-}
 
 /**
  * @return positive-int
@@ -44,7 +23,7 @@ function benchmarkPositiveInteger(?string $value, string $name): int
 }
 
 /**
- * @return list<SensitiveTerm>
+ * @return list<string>
  */
 function benchmarkTerms(int $termCount): array
 {
@@ -52,10 +31,10 @@ function benchmarkTerms(int $termCount): array
     $englishCount = max(0, $termCount - count($samples));
     $terms = [];
     for ($index = 1; $index <= $englishCount; ++$index) {
-        $terms[] = new SensitiveTerm(sprintf('term%06d', $index));
+        $terms[] = sprintf('term%06d', $index);
     }
     foreach (array_slice($samples, 0, $termCount - $englishCount) as $sample) {
-        $terms[] = new SensitiveTerm($sample);
+        $terms[] = $sample;
     }
 
     return $terms;
@@ -83,14 +62,10 @@ function benchmarkSparseText(int $codepoints, string $term): string
         . benchmarkExactText('界', $codepoints - $prefixLength - $termLength);
 }
 
-function benchmarkScanner(SensitiveDictionary $dictionary, TextNormalizer $normalizer): SensitiveText
+/** @param list<string> $terms */
+function benchmarkScanner(array $terms): Matcher
 {
-    return new SensitiveText(
-        $normalizer,
-        new BenchmarkDictionaryRepository($dictionary),
-        [new AhoCorasickMatcher()],
-        versionCheckInterval: PHP_FLOAT_MAX,
-    );
+    return new Matcher($terms);
 }
 
 /**
@@ -119,7 +94,7 @@ function benchmarkPercentile(array $samples, float $percentile): float
  * }
  */
 function benchmarkScenario(
-    SensitiveText $scanner,
+    Matcher $scanner,
     TextNormalizer $normalizer,
     string $text,
     int $iterations,
@@ -135,7 +110,7 @@ function benchmarkScenario(
         $startedAt = hrtime(true);
         $result = $scanner->scan($text);
         $samples[] = (hrtime(true) - $startedAt) / 1_000_000;
-        $emitted += $result->count();
+        $emitted += count($result);
     }
 
     $totalMs = array_sum($samples);
@@ -148,6 +123,119 @@ function benchmarkScenario(
         'matchesPerIteration' => intdiv($emitted, $iterations),
         'matchesPerSecond' => $totalMs > 0.0 ? $emitted / ($totalMs / 1000) : 0.0,
     ];
+}
+
+/**
+ * @return array{p50Ms: float, p95Ms: float}
+ */
+function benchmarkContains(Matcher $scanner, string $text, int $iterations): array
+{
+    $samples = [];
+    for ($iteration = 0; $iteration < $iterations; ++$iteration) {
+        $startedAt = hrtime(true);
+        if (!$scanner->contains($text)) {
+            throw new RuntimeException('Dense benchmark text must contain a sensitive word.');
+        }
+        $samples[] = (hrtime(true) - $startedAt) / 1_000_000;
+    }
+
+    return [
+        'p50Ms' => benchmarkPercentile($samples, 0.50),
+        'p95Ms' => benchmarkPercentile($samples, 0.95),
+    ];
+}
+
+/**
+ * @param callable(): mixed $operation
+ *
+ * @return array{p50Ms: float, p95Ms: float}
+ */
+function benchmarkOperation(callable $operation, int $iterations): array
+{
+    $samples = [];
+    for ($iteration = 0; $iteration < $iterations; ++$iteration) {
+        $startedAt = hrtime(true);
+        $operation();
+        $samples[] = (hrtime(true) - $startedAt) / 1_000_000;
+    }
+
+    return [
+        'p50Ms' => benchmarkPercentile($samples, 0.50),
+        'p95Ms' => benchmarkPercentile($samples, 0.95),
+    ];
+}
+
+/**
+ * 在同一归一化核心上对比 ASCII 快速路径与 Unicode 回退路径。
+ *
+ * @return array<string, int|float>
+ */
+function benchmarkAsciiComparison(int $codepoints, int $iterations): array
+{
+    $text = benchmarkExactText('a b-c!', $codepoints);
+    $noMatch = benchmarkExactText('z', $codepoints);
+    $dense = 'a' . benchmarkExactText('z', $codepoints - 1);
+    $fast = new TextNormalizer();
+    $fallback = new TextNormalizer(asciiFastPath: false);
+
+    if ($fast->normalizeString($text) !== $fallback->normalizeString($text)) {
+        throw new RuntimeException('ASCII benchmark paths produced different normalized text.');
+    }
+
+    $matcher = new AhoCorasickMatcher();
+    $fastDictionary = (new DictionaryCompiler($fast))->compile(['a']);
+    $fallbackDictionary = (new DictionaryCompiler($fallback))->compile(['a']);
+    $measurements = [
+        'fastNormalizeString' => benchmarkOperation(
+            static fn(): string => $fast->normalizeString($text),
+            $iterations,
+        ),
+        'fallbackNormalizeString' => benchmarkOperation(
+            static fn(): string => $fallback->normalizeString($text),
+            $iterations,
+        ),
+        'fastNormalizeMapped' => benchmarkOperation(
+            static fn() => $fast->normalize($text),
+            $iterations,
+        ),
+        'fallbackNormalizeMapped' => benchmarkOperation(
+            static fn() => $fallback->normalize($text),
+            $iterations,
+        ),
+        'fastContainsNoMatch' => benchmarkOperation(
+            static fn(): bool => $matcher->containsCharacters($fast->characters($noMatch), $fastDictionary),
+            $iterations,
+        ),
+        'fallbackContainsNoMatch' => benchmarkOperation(
+            static fn(): bool => $matcher->containsCharacters(
+                $fallback->characters($noMatch),
+                $fallbackDictionary,
+            ),
+            $iterations,
+        ),
+        'fastContainsEarlyMatch' => benchmarkOperation(
+            static fn(): bool => $matcher->containsCharacters($fast->characters($dense), $fastDictionary),
+            $iterations,
+        ),
+        'fallbackContainsEarlyMatch' => benchmarkOperation(
+            static fn(): bool => $matcher->containsCharacters(
+                $fallback->characters($dense),
+                $fallbackDictionary,
+            ),
+            $iterations,
+        ),
+    ];
+
+    $result = [
+        'textCodepoints' => $codepoints,
+        'iterations' => $iterations,
+    ];
+    foreach ($measurements as $name => $measurement) {
+        $result[$name . 'P50Ms'] = $measurement['p50Ms'];
+        $result[$name . 'P95Ms'] = $measurement['p95Ms'];
+    }
+
+    return $result;
 }
 
 /**
@@ -168,7 +256,7 @@ function benchmarkScenario(
  *         scanMs: float,
  *         matches: int,
  *         resultAllocationDeltaBytes: int
- *     }
+ *     },
  * }
  */
 function benchmarkPathologies(TextNormalizer $normalizer): array
@@ -185,18 +273,17 @@ function benchmarkPathologies(TextNormalizer $normalizer): array
     $overlapTextLength = 1000;
     $overlapTerms = [];
     for ($length = 1; $length <= $overlapTermCount; ++$length) {
-        $overlapTerms[] = new SensitiveTerm(str_repeat('a', $length));
+        $overlapTerms[] = str_repeat('a', $length);
     }
-    $overlapDictionary = new SensitiveDictionary('pathological', $overlapTerms);
     $startedAt = hrtime(true);
-    $compiled = (new DictionaryCompiler($normalizer))->compile($overlapDictionary);
+    $compiled = (new DictionaryCompiler($normalizer))->compile($overlapTerms);
     $compileMs = (hrtime(true) - $startedAt) / 1_000_000;
     $overlapText = str_repeat('a', $overlapTextLength);
     $startedAt = hrtime(true);
     $normalizer->normalize($overlapText);
     $normalizationMs = (hrtime(true) - $startedAt) / 1_000_000;
 
-    $scanner = benchmarkScanner($overlapDictionary, $normalizer);
+    $scanner = benchmarkScanner($overlapTerms);
     $scanner->scan('界');
     gc_collect_cycles();
     $beforeScan = memory_get_usage(false);
@@ -209,7 +296,7 @@ function benchmarkPathologies(TextNormalizer $normalizer): array
         'combiningMarks' => [
             'inputCodepoints' => mb_strlen($combiningMarks, 'UTF-8'),
             'normalizedCodepoints' => mb_strlen($normalizedMarks->normalized, 'UTF-8'),
-            'mappingEntries' => count($normalizedMarks->offsetMap),
+            'mappingEntries' => count($normalizedMarks->sourceStarts),
             'mappingAllocationDeltaBytes' => max(0, $afterNormalization - $beforeNormalization),
             'normalizationMs' => $combiningNormalizationMs,
         ],
@@ -220,65 +307,30 @@ function benchmarkPathologies(TextNormalizer $normalizer): array
             'normalizationMs' => $normalizationMs,
             'compileMs' => $compileMs,
             'scanMs' => $scanMs,
-            'matches' => $result->count(),
+            'matches' => count($result),
             'resultAllocationDeltaBytes' => max(0, $afterScan - $beforeScan),
         ],
     ];
 }
 
 /**
- * @return array{coldScanMs: float, reloadMs: float, dictionaryVersion: string, terms: int}
+ * @param list<string> $terms
+ *
+ * @return array{coldScanMs: float, constructionMs: float}
  */
-function benchmarkRedisRepository(DictionaryRepositoryInterface $repository, string $text): array
+function benchmarkConstruction(Matcher $scanner, array $terms, string $text): array
 {
-    $scanner = new SensitiveText(
-        new TextNormalizer(),
-        $repository,
-        [new AhoCorasickMatcher()],
-        versionCheckInterval: PHP_FLOAT_MAX,
-    );
     $startedAt = hrtime(true);
     $scanner->scan($text);
     $coldScanMs = (hrtime(true) - $startedAt) / 1_000_000;
-    $stats = $scanner->stats();
-    $dictionaryVersion = $stats->dictionaryVersion;
-    if (null === $dictionaryVersion) {
-        throw new LogicException('Cold Redis scan did not load a dictionary snapshot.');
-    }
     $startedAt = hrtime(true);
-    $scanner->reload();
-    $reloadMs = (hrtime(true) - $startedAt) / 1_000_000;
+    new Matcher($terms);
+    $constructionMs = (hrtime(true) - $startedAt) / 1_000_000;
 
     return [
         'coldScanMs' => $coldScanMs,
-        'reloadMs' => $reloadMs,
-        'dictionaryVersion' => $dictionaryVersion,
-        'terms' => $stats->termCount,
+        'constructionMs' => $constructionMs,
     ];
-}
-
-/**
- * @return array{coldScanMs: float, reloadMs: float, dictionaryVersion: string, terms: int}
- */
-function benchmarkRedis(string $text): array
-{
-    $redisUrl = getenv('SENSITIVE_TEXT_BENCHMARK_REDIS_URL');
-    if (false === $redisUrl || '' === $redisUrl) {
-        throw new InvalidArgumentException(
-            'SENSITIVE_TEXT_BENCHMARK_REDIS_URL is required with --redis.',
-        );
-    }
-    $prefix = getenv('SENSITIVE_TEXT_BENCHMARK_REDIS_PREFIX');
-    if (false === $prefix || '' === $prefix) {
-        $prefix = 'sensitive_text:';
-    }
-
-    $repository = new RedisDictionaryRepository(
-        PhpRedisClientAdapter::fromUrl($redisUrl, 1.0),
-        $prefix,
-    );
-
-    return benchmarkRedisRepository($repository, $text);
 }
 
 $scriptFilename = $_SERVER['SCRIPT_FILENAME'] ?? null;
@@ -300,7 +352,7 @@ try {
     $flags = array_slice($arguments, 4);
     foreach ($flags as $rawFlag) {
         $flag = is_string($rawFlag) ? $rawFlag : '';
-        if (!in_array($flag, ['--pathological', '--redis'], true)) {
+        if (!in_array($flag, ['--pathological', '--ascii-comparison'], true)) {
             throw new InvalidArgumentException('Unsupported benchmark option: ' . $flag);
         }
     }
@@ -310,11 +362,16 @@ try {
     gc_collect_cycles();
     $beforeTerms = memory_get_usage(false);
     $terms = benchmarkTerms($termCount);
-    $dictionary = new SensitiveDictionary('1', $terms);
     $afterTerms = memory_get_usage(false);
 
     $startedAt = hrtime(true);
-    $compiled = $compiler->compile($dictionary);
+    foreach ($terms as $term) {
+        $normalizer->normalizeString($term);
+    }
+    $normalizationMs = (hrtime(true) - $startedAt) / 1_000_000;
+
+    $startedAt = hrtime(true);
+    $compiled = $compiler->compile($terms);
     $compileMs = (hrtime(true) - $startedAt) / 1_000_000;
     $afterCompile = memory_get_usage(false);
 
@@ -329,21 +386,17 @@ try {
         }
     }
 
-    $scanner = benchmarkScanner($dictionary, $normalizer);
+    $scanner = benchmarkScanner($terms);
     $scanner->scan($texts['noMatch']);
     $scenarios = [];
     foreach ($texts as $name => $text) {
         $scenarios[$name] = benchmarkScenario($scanner, $normalizer, $text, $iterations);
     }
+    $denseContains = benchmarkContains($scanner, $texts['dense'], $iterations);
 
-    $coldScanner = benchmarkScanner($dictionary, $normalizer);
-    $startedAt = hrtime(true);
-    $coldScanner->scan($texts['sparse']);
-    $coldScanMs = (hrtime(true) - $startedAt) / 1_000_000;
-
-    $startedAt = hrtime(true);
-    $scanner->reload();
-    $reloadMs = (hrtime(true) - $startedAt) / 1_000_000;
+    $construction = benchmarkConstruction(benchmarkScanner($terms), $terms, $texts['sparse']);
+    $coldScanMs = $construction['coldScanMs'];
+    $constructionMs = $construction['constructionMs'];
 
     $nodes = count($compiled->transitions);
     $rawTermsBytes = max(0, $afterTerms - $beforeTerms);
@@ -353,20 +406,21 @@ try {
         'terms' => $termCount,
         'textCodepoints' => $textLength,
         'iterations' => $iterations,
-        'normalizationMs' => $compiled->normalizationSeconds * 1000,
+        'normalizationMs' => $normalizationMs,
         'compileMs' => $compileMs,
         'nodes' => $nodes,
         'rawTermsBytes' => $rawTermsBytes,
-        'compiledBytes' => $compiledBytes,
-        'estimatedMemoryBytes' => $compiled->estimatedMemoryBytes,
+        'compiledDeltaBytes' => $compiledBytes,
         'bytesPerNode' => $compiledBytes / $nodes,
         'bytesPerTerm' => $compiledBytes / $termCount,
         'warmScanP50Ms' => $sparse['warmScanP50Ms'],
         'warmScanP95Ms' => $sparse['warmScanP95Ms'],
         'coldScanMs' => $coldScanMs,
         'matchesPerSecond' => $sparse['matchesPerSecond'],
-        'reloadMs' => $reloadMs,
-        'peakMemoryBytes' => memory_get_peak_usage(true),
+        'constructionMs' => $constructionMs,
+        'denseContainsP50Ms' => $denseContains['p50Ms'],
+        'denseContainsP95Ms' => $denseContains['p95Ms'],
+        'processPeakBytes' => memory_get_peak_usage(true),
         'php' => PHP_VERSION,
         'icu' => INTL_ICU_VERSION,
         'scenarios' => $scenarios,
@@ -374,10 +428,9 @@ try {
     if (in_array('--pathological', $flags, true)) {
         $output['pathologies'] = benchmarkPathologies($normalizer);
     }
-    if (in_array('--redis', $flags, true)) {
-        $output['redis'] = benchmarkRedis($texts['sparse']);
+    if (in_array('--ascii-comparison', $flags, true)) {
+        $output['asciiComparison'] = benchmarkAsciiComparison($textLength, $iterations);
     }
-
     echo json_encode($output, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE) . PHP_EOL;
 } catch (Throwable $exception) {
     fwrite(STDERR, $exception->getMessage() . PHP_EOL);

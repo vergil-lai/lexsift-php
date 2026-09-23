@@ -1,42 +1,23 @@
-# Release checklist
+# 发布检查清单
 
-Use one status for every check and retain its command output in the release task:
+## 包内容
 
-- `[x] PASS` — run completed successfully;
-- `[ ] NOT RUN` — not executed, with the missing environment or authorization recorded;
-- `[!] FAILED` — executed and failed, with the failure recorded.
+- `[ ]` 确认包名、命名空间、MIT 许可证、README 和 CHANGELOG。
+- `[ ]` 执行 `composer validate --strict`。
+- `[ ]` 执行 `composer check-platform-reqs`，确认 `ext-intl` 与 `ext-mbstring`。
+- `[ ]` 执行 `composer test:release`，验证归档中的独立 PHP 使用流程。
+- `[ ]` 确认归档包含 `README.md`、`LICENSE`、`CHANGELOG.md`、`composer.json`、`src` 和 `examples`。
+- `[ ]` 确认归档排除测试、基准、CI、计划、锁文件、开发工具配置和 `.serena`。
 
-A local archive smoke is not proof that Packagist installation works. Do not mark publishing complete until the tagged package is installed from Packagist in a clean consumer.
+## 质量与兼容性
 
-## Package identity and contents
+- `[ ]` 执行 `composer check`。
+- `[ ]` 执行 `composer test:coverage` 并确认覆盖率至少为 85%。
+- `[ ]` 执行 `php benchmarks/run.php`，与相同环境的基线比较。
+- `[ ]` 确认 PHP 8.2、8.3、8.4、8.5 和最低依赖 CI 任务通过。
 
-- `[ ] NOT RUN` Confirm package name `vergil-lai/sensitive-text`, namespace `VergilLai\SensitiveText\`, MIT license, README examples, and changelog.
-- `[ ] NOT RUN` Run `composer validate --strict`.
-- `[ ] NOT RUN` Run `composer check-platform-reqs`; confirm `ext-intl`, `ext-mbstring`, and `ext-redis` succeed on the real platform.
-- `[ ] NOT RUN` Run `composer test:release`; retain the installed package metadata, forbidden-package result, and `ext-redis ... success` output.
-- `[ ] NOT RUN` Inspect the archive: keep `README.md`, `LICENSE`, `CHANGELOG.md`, `composer.json`, `config`, `src`, and user documentation; exclude tests, benchmarks, CI, planning files, lockfile, and development tool configuration.
+## 发布
 
-## Quality and compatibility
-
-- `[ ] NOT RUN` Run `composer check`.
-- `[ ] NOT RUN` Run `SENSITIVE_TEXT_REDIS_TESTS=1 composer test` against a dedicated real Redis server.
-- `[ ] NOT RUN` Run `composer test:coverage` with PCOV/Xdebug and confirm at least 85% line coverage.
-- `[ ] NOT RUN` Run `php benchmarks/run.php`; compare like-for-like host, PHP, ICU, iterations, and data shapes.
-- `[ ] NOT RUN` Confirm CI passed on real PHP 8.2, 8.3, 8.4, and 8.5, including the PHP 8.2 lowest-dependency job.
-- `[ ] NOT RUN` Confirm Laravel 12/Testbench 10 and Laravel 13/Testbench 11 solver/test channels passed.
-- `[ ] NOT RUN` Record Swoole/OpenSwoole, RoadRunner, FrankenPHP, and Octane real-host results separately; simulated worker tests do not certify them.
-
-## phpredis-only boundary
-
-- `[ ] NOT RUN` Confirm installed metadata requires `ext-redis: *`.
-- `[ ] NOT RUN` Confirm the no-dev consumer contains no `predis/predis`, Illuminate packages, Pest, PHPStan, or PHP-CS-Fixer.
-- `[ ] NOT RUN` Confirm the Laravel consumer discovers the provider and resolves the facade while configured for phpredis.
-- `[ ] NOT RUN` Confirm documentation has no fallback, driver-selection, or Redis Cluster support claim.
-
-## Publication
-
-- `[ ] NOT RUN` Review the final diff and create the intended release commit.
-- `[ ] NOT RUN` Select the version and update the changelog only after approval.
-- `[ ] NOT RUN` Create and push the version tag only after approval.
-- `[ ] NOT RUN` Publish/register on Packagist only after approval.
-- `[ ] NOT RUN` Install the tagged version from Packagist into clean plain-PHP and Laravel consumers.
+- `[ ]` 审查最终差异并创建发布提交。
+- `[ ]` 获得版本确认后更新 CHANGELOG、创建并推送标签。
+- `[ ]` 从 Packagist 安装已发布版本到全新的独立 PHP 项目验证。

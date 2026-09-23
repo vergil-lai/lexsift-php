@@ -5,3 +5,4 @@
 /coverage/
 /benchmarks/results/
 /composer.lock
+.serena/

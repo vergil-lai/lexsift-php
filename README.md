@@ -1,322 +1,133 @@
-# Sensitive Text
+# LexSift PHP
 
-Unicode-aware sensitive-text detection for PHP 8.2+, backed by a versioned Redis dictionary. The package maps matches back to the original text, supports Aho-Corasick and regex rules, and can run as plain PHP or through Laravel package discovery.
+LexSift PHP 是使用 PHP 实现的文本匹配库，基于 Aho-Corasick 算法一次匹配多个词条，适用于敏感词检测、关键词检索和文本替换。支持全角与半角转换、大小写统一、忽略空白等文本处理，并提供重叠匹配、短语白名单和原文脱敏。
 
-## Installation
+通过 `VergilLai\LexSift\Matcher` 创建独立的匹配器实例。词库在构造或替换时编译，后续查询直接复用。
 
-```bash
-composer require vergil-lai/sensitive-text
+## 环境要求
+
+- PHP 8.2 或以上。
+- `ext-intl`，用于 Unicode 归一化。
+- `ext-mbstring`，用于 UTF-8 校验和字符处理。
+
+## 安装
+
+发布后可通过 Composer 安装：
+
+```sh
+composer require vergil-lai/lexsift-php
 ```
 
-## Requirements
+## 使用示例
 
-- PHP 8.2 or newer;
-- `ext-intl` and `ext-mbstring`;
-- `ext-redis` (phpredis), required by Composer;
-- Redis 7 for the tested dictionary protocol.
-
-`ext-redis` is a hard dependency: Composer blocks installation when it is missing. Predis is not supported and there is no runtime fallback or client selection. Redis Cluster is not supported because the atomic dictionary scripts require both keys on one primary; a single primary or a Sentinel-selected primary is supported.
-
-## Quick Start
-
-The package does not contain a business sensitive-word list. Publish your own dictionary before the first scan:
+以下示例展示匹配、脱敏和更新词库：
 
 ```php
 <?php
+declare(strict_types=1);
 
-require __DIR__.'/vendor/autoload.php';
+require 'vendor/autoload.php';
 
-use VergilLai\SensitiveText\Dictionary\RedisDictionaryRepository;
-use VergilLai\SensitiveText\Dictionary\SensitiveTerm;
-use VergilLai\SensitiveText\Redis\PhpRedisClientAdapter;
-use VergilLai\SensitiveText\Rules\Action;
-use VergilLai\SensitiveText\Rules\Severity;
-use VergilLai\SensitiveText\SensitiveText;
+use VergilLai\LexSift\Matcher;
 
-$redis = new \Redis();
-$redis->connect('127.0.0.1', 6379, 1.0);
-$repository = new RedisDictionaryRepository(new PhpRedisClientAdapter($redis));
-// 仅首次创建；后续发布传入实际 expectedVersion，冲突后重新读取与合并。
-$repository->publish([new SensitiveTerm('微信', 'contact', Severity::Medium, Action::Review)], null);
-$result = SensitiveText::instance()->scan('请加我微❤️信联系');
-echo $result->matches()[0]->matchedText;
-echo $result->mask('*');
-```
-
-The default scanner connects lazily to `tcp://127.0.0.1:6379`, uses the `sensitive_text:` prefix, and checks the dictionary version at most once every five seconds.
-
-## Architecture
-
-The scan path is synchronous and stateless per request:
-
-1. `RedisDictionaryRepository` atomically reads a version and JSON payload.
-2. `TextNormalizer` normalizes dictionary terms and input while retaining original code-point spans.
-3. `DictionaryCompiler` builds an immutable Aho-Corasick snapshot.
-4. Aho-Corasick and configured regex matchers emit `MatchResult` values.
-5. `WhitelistMatcher` filters matching ranges and `ScanResult` exposes policy and masking helpers.
-
-The compiled snapshot is reused until polling or `invalidate()` triggers a successful replacement. An automatic reload failure keeps the last-known-good snapshot; an initial or explicit `reload()` failure throws a dictionary exception.
-
-### Public API
-
-The supported entry points are:
-
-- `SensitiveText::instance()`, `fromConfig()`, `scan()`, `reload()`, `invalidate()`, and `stats()`;
-- `SensitiveTextConfig` and `NormalizerConfig` for plain PHP configuration;
-- `RedisDictionaryRepository::version()`, `load()`, and `publish()` plus `PhpRedisClientAdapter`;
-- `SensitiveTerm`, `SensitiveDictionary`, `MatchResult`, `ScanResult`, and `ScannerStats` data objects;
-- `RegexRule`, `WhitelistRule`, `Action`, `Severity`, `RegexTarget`, and `WhitelistMode` rule types;
-- `SyncBatchExecutor::scan()` and `RuntimeEnvironment::detect()`;
-- the contracts under `VergilLai\SensitiveText\Contracts` for repositories, matchers, clocks, Redis protocol adapters, and batch executors;
-- Laravel's `SensitiveTextServiceProvider` and `Laravel\Facades\SensitiveText` facade.
-
-`ScanResult` provides `matches()`, `matched()`, `count()`, `highestSeverity()`, `recommendedAction()`, `shouldBlock()`, `shouldReview()`, and `mask()`. `Action` precedence is `allow < flag < review < block`; `Severity` is `Low=1`, `Medium=2`, `High=3`, and `Critical=4`.
-
-Matcher/compiler/codec classes are public for advanced composition, but the entry points above cover normal use. `Support\DefaultScanner` is internal and must not be imported.
-
-The complete advanced surface is:
-
-| Type | Public surface |
-| --- | --- |
-| `TextNormalizer` | constructor and `normalize()` |
-| `NormalizedText` / `SourceSpan` | immutable mapping fields plus `span()`, `sliceOriginal()`, and `normalizedRangeForOriginal()` |
-| `DictionaryCompiler` / `DictionaryJsonCodec` | `compile()`, `encode()`, and `decode()` |
-| `CompiledDictionary` | immutable compiled snapshot fields |
-| `AhoCorasickCompiler` / `AhoCorasickMatcher` | `compile()` and `match()` |
-| `RegexMatcher` / `WhitelistMatcher` | constructors plus `match()` and `filter()` |
-| `PhpRedisClientAdapter` | constructor, `fromUrl()`, `get()`, `readSnapshot()`, and `compareAndSwap()` |
-| `LaravelRedisAdapter` | constructor, `lazy()`, `get()`, `readSnapshot()`, and `compareAndSwap()` for Laravel phpredis connections |
-| `SystemClock` | `monotonic()` and `wallTime()` |
-| `SensitiveTerm`, `SensitiveDictionary`, `MatchResult`, `ScannerStats` | immutable public constructor fields |
-| contracts | `BatchExecutorInterface::scan()`, `ClockInterface::monotonic()/wallTime()`, `DictionaryRepositoryInterface::version()/load()`, `MatcherInterface::match()`, and `RedisClientInterface::get()/readSnapshot()/compareAndSwap()` |
-| exceptions | `SensitiveTextException`, `DictionaryException`, `DictionaryCompileException`, `RedisUnavailableException`, `InvalidConfigurationException`, `InvalidRuleException`, and `NormalizationException` |
-
-The default policies are:
-
-| Setting | Default |
-| --- | --- |
-| Redis URL / Laravel connection | `tcp://127.0.0.1:6379` / `default` |
-| Redis prefix | `sensitive_text:` |
-| Dictionary / version key suffix | `dictionary` / `dictionary:version` |
-| Redis timeout (plain PHP) | `1.0` second |
-| Version check interval | `5.0` seconds |
-| Mask | `*` |
-| Reload policy | keep the last good snapshot for automatic reload; explicit reload throws |
-| Batch driver | synchronous |
-| Regex rules / whitelist rules | empty |
-
-## Redis Setup
-
-Plain PHP accepts `tcp://` and `tls://` URLs, optional URL-encoded ACL credentials, and an optional database path:
-
-```php
-use VergilLai\SensitiveText\SensitiveText;
-use VergilLai\SensitiveText\SensitiveTextConfig;
-
-$scanner = SensitiveText::fromConfig(new SensitiveTextConfig(
-    redisUrl: 'tcp://user:password@127.0.0.1:6379/2',
-    redisPrefix: 'my_app:sensitive_text:',
-    redisTimeout: 1.0,
-));
-```
-
-The prefix, dictionary key, and version key compose into two dedicated keys. Do not set TTLs on either key and do not write around the repository's compare-and-swap publication. The complete atomic protocol is in [docs/dictionary-protocol.md](docs/dictionary-protocol.md).
-
-## Dictionary Format
-
-The JSON payload is schema version 1:
-
-```json
-{"schema":1,"terms":[{"term":"赌博","category":"gambling","severity":3,"action":"block","enabled":true,"metadata":{"source":"manual"}}]}
-```
-
-`term` and `category` are non-empty strings. `severity` is `1..4`, `action` is `allow`, `flag`, `review`, or `block`, and `enabled` is boolean. Metadata accepts JSON scalars/null or one nested array/object of scalars/null. Disabled terms remain in the source dictionary but are not compiled.
-
-Dictionary versions are non-negative decimal strings without leading zeroes, up to `9223372036854775807`. The first publication uses `expectedVersion: null` and produces version `1`; every later writer must pass the version it read. A stale expected version raises `DictionaryException` instead of overwriting another publisher.
-
-## Normalization
-
-Defaults are NFKC normalization, lowercase conversion, whitespace removal, emoji removal, punctuation retention, symbol retention, and no custom removed characters. This conservative default favors fewer false positives. `NormalizerConfig::aggressive()` additionally removes punctuation and symbols and should be enabled only after evaluating your corpus.
-
-```php
-use VergilLai\SensitiveText\Normalizer\NormalizerConfig;
-use VergilLai\SensitiveText\SensitiveTextConfig;
-
-$config = new SensitiveTextConfig(
-    normalizer: new NormalizerConfig(
-        removeWhitespace: true,
-        removePunctuation: false,
-        removeSymbols: false,
-        removeEmoji: true,
-        removeCharacters: ['·'],
-    ),
+$filter = new Matcher(
+    terms: ['赌博', '博彩', 'bad word', '微信'],
+    whitelist: ['合法博彩说明', '微信支付'],
+    options: ['lowercase' => true, 'remove_emoji' => true],
 );
+
+$text = '前赌 博后，微信支付';
+var_dump($filter->contains($text));
+print_r($filter->scan($text));
+echo $filter->mask($text), "\n";
+
+$filter->replaceTerms(['新的词语', '另一个词语']);
+$filter->replaceWhitelist(['允许出现的完整短语']);
+var_dump($filter->contains('新的词语'));
 ```
 
-Offsets are zero-based UTF-8 Unicode code-point ranges `[start, end)`, never byte offsets. `matchedText` is always the exact original slice, so removed spaces or emoji may appear inside a dictionary match.
-
-## Aho-Corasick
-
-Enabled dictionary terms are normalized once and compiled into an immutable Aho-Corasick automaton. A single scan emits overlapping dictionary matches, maps each normalized range to the original text, and deduplicates identical results. Compilation happens on first use and after a successful dictionary replacement.
-
-## Regex Rules
-
-Regex rules use `/`, `~`, or `#` delimiters and must include the Unicode `u` modifier. Rules can target original or normalized text:
+`scan()` 对 `赌 博` 的命中如下；空格属于原文匹配范围：
 
 ```php
-use VergilLai\SensitiveText\Rules\Action;
-use VergilLai\SensitiveText\Rules\RegexRule;
-use VergilLai\SensitiveText\Rules\RegexTarget;
-use VergilLai\SensitiveText\Rules\Severity;
-use VergilLai\SensitiveText\SensitiveTextConfig;
-
-$config = new SensitiveTextConfig(regexRules: [
-    new RegexRule(
-        id: 'wechat-id',
-        pattern: '/wx[a-z0-9_]{4,}/iu',
-        category: 'contact',
-        severity: Severity::High,
-        action: Action::Review,
-        target: RegexTarget::Original,
-    ),
-]);
+[
+    'term' => '赌博',
+    'text' => '赌 博',
+    'start' => 3,
+    'end' => 10,
+]
 ```
 
-PCRE's normal non-overlapping behavior applies within one rule. Matches from separate rules and the dictionary may overlap.
+## API 与输入约定
 
-## Whitelist
+| 方法 | 行为 |
+| --- | --- |
+| `__construct(array $terms, array $whitelist = [], array $options = [])` | 构建独立实例；未指定的选项使用默认值 |
+| `contains(string $text): bool` | 找到首个未被白名单排除的匹配即停止匹配迭代 |
+| `scan(string $text): array` | 返回所有有效重叠匹配 |
+| `mask(string $text, string $replacement = '*'): string` | 合并有效原文范围后替换 |
+| `replaceTerms(array $terms): void` | 完整替换当前实例词库 |
+| `replaceWhitelist(array $whitelist): void` | 完整替换当前实例白名单 |
 
-Whitelist rules suppress detected ranges; they do not make a semantic decision about intent. `Phrase` mode suppresses matches contained by an occurrence of the whitelist text. `Exact` mode suppresses only a match whose original interval normalizes to the same text as the whitelist rule.
+词库与白名单只接受字符串值，数组键不参与匹配，顺序采用 PHP 数组遍历顺序。空数组合法；空字符串及经过文本处理后为空的词抛出 `ValueError`。原始重复词和处理后相同的词均保留首次出现者，包括返回的原始 `term`。替换操作成功后立即生效，失败时保留旧状态，不影响其他实例。
 
-```php
-use VergilLai\SensitiveText\Rules\WhitelistMode;
-use VergilLai\SensitiveText\Rules\WhitelistRule;
-use VergilLai\SensitiveText\SensitiveTextConfig;
+所有文本入口，包括词库、白名单、正文和 replacement，必须为合法 UTF-8；损坏字节抛出 `ValueError`，不会被静默修复。类型错误抛出 `TypeError`；未知或非法 options 键抛出 `ValueError`。
 
-$config = new SensitiveTextConfig(whitelistRules: [
-    new WhitelistRule('微信支付', WhitelistMode::Phrase),
-]);
-```
+## 文本处理选项
 
-Treat whitelists as precise range exceptions and test them against production-language examples; they are intentionally non-semantic.
+仅接受以下六个布尔选项；可只传其中部分，`0`、`1` 或字符串不代替布尔值。
 
-## Mask
+| 选项 | 默认值 | 行为 |
+| --- | --- | --- |
+| `unicode_nfkc` | `true` | 统一字符形式（Unicode NFKC），包括全角转换、字符展开与组合 |
+| `lowercase` | `true` | Unicode 逐码点小写转换 |
+| `remove_whitespace` | `true` | 删除 Unicode 空白 |
+| `remove_punctuation` | `false` | 删除 Unicode 标点 |
+| `remove_symbols` | `false` | 删除 Unicode 符号 |
+| `remove_emoji` | `true` | 按原始 grapheme 整簇删除 emoji |
 
-`$result->mask()` uses the configured default `*`; `$result->mask('#')` overrides it for one result, and an empty string removes matched ranges. The mask must be empty or one valid Unicode code point. Overlapping ranges are merged, and the mask count equals the number of original Unicode code points in the merged range. Therefore a match such as `微❤️信` can produce more mask characters than the normalized dictionary term because the original emoji/variation-selector code points remain part of the span.
+词库、白名单和正文始终使用同一套文本处理规则。这些处理只用于匹配，返回的原词、命中文本和未命中的原文不会被改写。
 
-## Dictionary Reload
+先按原始 grapheme 移除 emoji，再执行全串 NFKC、逐码点小写转换和其他字符过滤。小写允许一字符展开为多字符；不执行 Unicode case folding、语言环境相关转换或希腊 final sigma 等上下文映射，也不删除变音符。
 
-The default `versionCheckInterval` is `5.0` seconds. A scan inside that window reuses the compiled snapshot. After the interval, the scanner reads the version and recompiles only when it changed.
+Emoji 使用宽泛规则：原始 grapheme 含 Extended_Pictographic、Emoji_Presentation、Emoji_Modifier、Regional_Indicator、VS16 或 keycap enclosing mark 时整簇删除，涵盖 ZWJ、肤色、旗帜及 keycap。普通数字、`#`、`*` 保留；`©`、`©︎`、`©️` 均会被删除。需要保留这些符号时，将 `remove_emoji` 设为 `false`。
 
-- `reload()` immediately loads and compiles, and propagates failures;
-- `invalidate()` clears the polling timestamp so the next scan checks immediately;
-- `stats()` reports version, term/node counts, compile duration, memory estimate, check/reload times, and the last reload error.
+Unicode 属性和归一化使用本机 ICU、PCRE、mbstring，具体字符支持取决于运行环境的 Unicode 数据版本。
 
-V1 provides periodic polling and an explicit invalidation interface. It does not start a Pub/Sub listener. Call `invalidate()` from your application's existing notification path if you need faster convergence.
+## 白名单与字节偏移
 
-## Laravel Usage
+白名单是普通字符串短语。经过文本处理后，敏感词匹配范围完整包含于**某一个**白名单匹配范围时才被忽略；部分重叠不豁免，多个白名单范围也不会联合形成豁免。例如 `微信支付` 可豁免其中的 `微信`，但白名单 `f` 不会豁免原文 `ﬁ` 经 NFKC 展开后的敏感词 `i`。
 
-Laravel 12 and 13 integration is optional and discovered from Composer metadata. The host application must use Laravel's phpredis driver:
+`scan()` 返回普通数组，每项只有 `term`、`text`、`start`、`end`。`term` 为词库原词，`text` 为命中的原文切片。偏移为原始 UTF-8 字符串的**字节偏移**，采用 `[start, end)`，保证 `substr($text, $start, $end - $start)` 等于匹配项的 `text`。
 
-```dotenv
-REDIS_CLIENT=phpredis
-```
+支持重叠，按 start 升序、同起点较长范围优先排列；相同范围的不同词按词库顺序排列。同一词映射到同一原文范围时只返回一次。位置映射覆盖完整来源 grapheme，因此组合字符不会被从中截断；跨越被移除字符时，这些内部字符也包含在匹配跨度中。独立的边缘被移除字符不会被扩大包含。
 
-Publish the package config when you need to customize it:
+`mask()` 先排除白名单，再合并原文字节空间中重叠或相邻的有效范围，每个合并范围替换为**一次** replacement。空 replacement 表示删除，多字符 replacement 合法。替换不会修改未匹配原文，也不会因前面的替换导致后续偏移失效。
 
-```bash
-php artisan vendor:publish --tag=sensitive-text-config
-```
+## 验证与 benchmark
 
-Resolve the singleton through the container or facade:
+在源码目录安装开发依赖，运行质量检查、测试和基准测试：
 
-```php
-use VergilLai\SensitiveText\Laravel\Facades\SensitiveText as SensitiveTextFacade;
-use VergilLai\SensitiveText\SensitiveText;
-
-$fromContainer = app(SensitiveText::class)->scan($request->string('content')->toString());
-$fromFacade = SensitiveTextFacade::scan('待检测文本');
-```
-
-`config/sensitive-text.php` contains scalar-only cached configuration for the Redis connection name/prefix, dictionary key suffixes, normalizer, polling interval, mask, regex rules, whitelists, fixed `keep_last_good` reload policy, and fixed `sync` batch driver. Configure timeouts and credentials on the named Laravel Redis connection in `config/database.php`; the package does not mutate it.
-
-Laravel may already prepend a connection-level Redis prefix. The package's `redis.prefix` is added to the keys sent through that connection, so do not repeat the same prefix in both places.
-
-## Octane Usage
-
-The Laravel binding is a process singleton with lazy Redis connection resolution. It does not capture a request, user, facade result, or application snapshot. It also does not register Octane ticks or worker hooks; normal scans perform the bounded version polling.
-
-The code is designed for long-running workers, but Swoole, OpenSwoole, RoadRunner, and FrankenPHP have not all been certified on a real host. Validate your chosen runtime and Redis connection lifecycle before production rollout.
-
-## Batch Scanning
-
-V1 provides only the synchronous executor and preserves iterable keys:
-
-```php
-use VergilLai\SensitiveText\Runtime\SyncBatchExecutor;
-
-$executor = new SyncBatchExecutor($scanner);
-foreach ($executor->scan(['first' => '正常文本', 'second' => '联系微信']) as $key => $result) {
-    echo $key.': '.($result->matched() ? 'matched' : 'clean').PHP_EOL;
-}
-```
-
-There is no built-in asynchronous or fork executor.
-
-## Performance
-
-Normalization, compilation, network loading, match density, and result allocation affect different parts of latency. Reuse a scanner within a worker so compilation is amortized. Dense and pathological overlapping results may allocate much more memory than no-match scans. See [docs/performance.md](docs/performance.md) for the recorded baseline and comparison method.
-
-## Worker Safety
-
-Compiled Automaton is reused inside long-running workers.
-
-request-specific state is never stored on singleton services.
-
-Fiber is not used in the core scan path.
-
-Fork-based processing is intended for CLI/offline batch workloads only.
-
-The current release does not implement fork processing. If a future CLI executor is added, each child must establish its own Redis connection; do not fork an already-connected client or use fork processing in HTTP/Octane workers.
-
-## Error Handling
-
-Operational package failures derive from `SensitiveTextException`. Configuration/rule/normalization failures use `InvalidConfigurationException`, `InvalidRuleException`, and `NormalizationException`. Dictionary protocol, compilation, and Redis failures use `DictionaryException`, `DictionaryCompileException`, and `RedisUnavailableException`. Public value objects use PHP's `InvalidArgumentException` when constructor data or match ranges violate their local invariants.
-
-Automatic refresh keeps a previously compiled snapshot and records a sanitized error in `stats()`. Initial load and explicit `reload()` cannot serve an old snapshot and throw. Do not catch these exceptions as a signal to switch Redis clients; there is no Predis or non-atomic fallback.
-
-## Testing
-
-```bash
-composer test
-SENSITIVE_TEXT_REDIS_TESTS=1 composer test
+```sh
+composer install
+composer check
+composer test:coverage
 composer test:release
-```
-
-The Redis integration suite and release smoke require a dedicated Redis instance on `127.0.0.1:6379` by default. Override `SENSITIVE_TEXT_REDIS_HOST` and `SENSITIVE_TEXT_REDIS_PORT` when necessary. Tests use random prefixes and remove only their own two dictionary keys; they never run `FLUSHDB` or `FLUSHALL`.
-
-## PHPStan
-
-```bash
-composer stan
-```
-
-PHPStan runs at level `max` over `src`, `tests`, `config`, and `benchmarks`.
-
-## PHP-CS-Fixer
-
-```bash
-composer cs
-composer cs:fix
-```
-
-`composer cs` is read-only; `composer cs:fix` applies the repository style rules.
-
-## Benchmark
-
-```bash
 php benchmarks/worker.php 1000 100 3
-php benchmarks/run.php
 ```
 
-The worker prints one JSON record. The full runner covers 1,000–100,000 terms and 100–10,000 code-point texts. Benchmark results are machine-specific evidence, not a portable latency guarantee. Optional read-only Redis timing is documented in [docs/performance.md](docs/performance.md).
+测试覆盖参数校验、返回值、Unicode 映射、白名单和原子替换。覆盖率检查需要 PCOV 或 Xdebug。基准测试说明见 [性能文档](docs/performance.md)。
+
+可运行示例位于 [examples](examples)：
+
+```sh
+php examples/scan.php '请勿参与赌博'
+php examples/batch-scan.php
+```
+
+## PHP 扩展版本
+
+本项目也提供 [LexSift PHP 扩展版本](https://github.com/vergil-lai/lexsift)，使用 Rust 实现匹配引擎。两个版本采用一致的方法、参数和返回值约定；扩展版本使用 `LexSift\Matcher`，本库使用 `VergilLai\LexSift\Matcher`。不同运行环境的 Unicode 数据版本可能导致个别字符的处理结果存在差异。
+
+## 协议
+
+[MIT](LICENSE)

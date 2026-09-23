@@ -2,9 +2,7 @@
 
 declare(strict_types=1);
 
-use VergilLai\SensitiveText\Exception\NormalizationException;
-use VergilLai\SensitiveText\Normalizer\NormalizerConfig;
-use VergilLai\SensitiveText\Normalizer\TextNormalizer;
+use VergilLai\LexSift\Normalizer\TextNormalizer;
 
 dataset('normalization', [
     ['ＷＥＣＨＡＴ', 'wechat'],
@@ -27,17 +25,41 @@ it('normalizes deterministically', function (string $input, string $output) {
     expect((new TextNormalizer())->normalize($input)->normalized)->toBe($output);
 })->with('normalization');
 
+it('uses the same transformation rules for strings without source mapping', function (string $input) {
+    $normalizer = new TextNormalizer();
+
+    expect($normalizer->normalizeString($input))
+        ->toBe($normalizer->normalize($input)->normalized);
+})->with([
+    'compatibility and lowercase' => ['ＷeＣhＡt'],
+    'combining marks' => ["a\u{0315}\u{0300}"],
+    'ligature expansion' => ['ﬃ'],
+    'emoji and whitespace removal' => [' 微❤️ 信 '],
+    'hangul composition' => ["\u{1100}\u{1161}\u{11A8}"],
+]);
+
+it('streams the same normalized characters without building source mapping', function (string $input) {
+    $normalizer = new TextNormalizer();
+
+    expect(iterator_to_array($normalizer->characters($input), false))
+        ->toBe($normalizer->normalize($input)->characters);
+})->with([
+    'ascii' => ['A b C'],
+    'unicode' => ['微❤️信 ﬃ'],
+    'combining marks' => ["e\u{0301}"],
+]);
+
 it('rejects invalid utf8', function () {
     expect(fn() => (new TextNormalizer())->normalize("\xFF"))
-        ->toThrow(NormalizationException::class);
+        ->toThrow(\ValueError::class);
 });
 
 it('agrees with whole-string ICU normalization', function () {
-    $normalizer = new TextNormalizer(new NormalizerConfig(
-        lowercase: false,
-        removeWhitespace: false,
-        removeEmoji: false,
-    ));
+    $normalizer = new TextNormalizer([
+        'lowercase' => false,
+        'remove_whitespace' => false,
+        'remove_emoji' => false,
+    ]);
 
     foreach (["a\u{0315}\u{0300}", "\u{1100}\u{1161}\u{11A8}", 'ｶﾞ', '㍍ﬃ', 'Å'] as $text) {
         expect($normalizer->normalize($text)->normalized)
@@ -45,33 +67,28 @@ it('agrees with whole-string ICU normalization', function () {
     }
 });
 
-it('applies each removal option independently', function (NormalizerConfig $config, string $input, string $output) {
+it('applies each removal option independently', function (array $config, string $input, string $output) {
     expect((new TextNormalizer($config))->normalize($input)->normalized)->toBe($output);
 })->with([
     'keeps whitespace when disabled' => [
-        new NormalizerConfig(removeWhitespace: false),
+        ['remove_whitespace' => false],
         ' A B ',
         ' a b ',
     ],
     'removes fullwidth punctuation' => [
-        new NormalizerConfig(removePunctuation: true),
+        ['remove_punctuation' => true],
         'Ａ，B。!',
         'ab',
     ],
     'removes symbols' => [
-        new NormalizerConfig(removeSymbols: true),
+        ['remove_symbols' => true],
         'C++ ¥',
         'c',
     ],
     'keeps emoji when disabled' => [
-        new NormalizerConfig(removeEmoji: false),
+        ['remove_emoji' => false],
         '微😀👨‍👩‍👧‍👦🇨🇳1️⃣信',
         '微😀👨‍👩‍👧‍👦🇨🇳1️⃣信',
-    ],
-    'removes configured characters after lowercase' => [
-        new NormalizerConfig(removeCharacters: ['x']),
-        'xX中',
-        '中',
     ],
 ]);
 
@@ -80,24 +97,24 @@ it('removes multiple emoji clusters', function () {
 });
 
 it('keeps every character when removal options are disabled', function () {
-    $normalizer = new TextNormalizer(new NormalizerConfig(
-        lowercase: false,
-        removeWhitespace: false,
-        removePunctuation: false,
-        removeSymbols: false,
-        removeEmoji: false,
-    ));
+    $normalizer = new TextNormalizer([
+        'lowercase' => false,
+        'remove_whitespace' => false,
+        'remove_punctuation' => false,
+        'remove_symbols' => false,
+        'remove_emoji' => false,
+    ]);
 
     expect($normalizer->normalize('A ❤️ +.!')->normalized)->toBe('A ❤️ +.!');
 });
 
 it('can bypass unicode normalization while retaining other behavior', function () {
-    $normalizer = new TextNormalizer(new NormalizerConfig(
-        unicodeNfkc: false,
-        lowercase: false,
-        removeWhitespace: false,
-        removeEmoji: false,
-    ));
+    $normalizer = new TextNormalizer([
+        'unicode_nfkc' => false,
+        'lowercase' => false,
+        'remove_whitespace' => false,
+        'remove_emoji' => false,
+    ]);
 
     expect($normalizer->normalize("ｅ\u{0301}")->normalized)->toBe("ｅ\u{0301}");
 });
